@@ -758,6 +758,417 @@ function TimeTrackerWidget() {
   );
 }
 
+// ── Forest Reminders hook ─────────────────────────────────────────────────────
+
+const FR_KEY = "forestReminders";
+function useForestReminders() {
+  const [reminders, setReminders] = useState(() => {
+    try {
+      const raw = localStorage.getItem(FR_KEY);
+      return raw ? { ...FOREST_REMINDERS, ...JSON.parse(raw) } : { ...FOREST_REMINDERS };
+    } catch { return { ...FOREST_REMINDERS }; }
+  });
+  useEffect(() => { localStorage.setItem(FR_KEY, JSON.stringify(reminders)); }, [reminders]);
+  return [reminders, setReminders];
+}
+
+// ── Studies & Projects card ───────────────────────────────────────────────────
+
+const SP_KEY = "studiesProjects";
+const SP_DEFAULTS = {
+  courses: [
+    { id: 1, name: "Product Line Engineering", description: "Kiinteistöseuranta-projekti — Evalance/FeatureIDE", deadline: "", moodleUrl: "" },
+  ],
+  projects: [
+    { id: 2, name: "Metsädashboard MVP", description: "WFS API + LiDAR — Python", status: "active", url: "" },
+    { id: 3, name: "ML/AI Roadmap", description: "Viikko 8 / 26", status: "active", url: "" },
+  ],
+};
+
+function StudiesProjectsCard() {
+  const [data, setData] = useState(() => {
+    try {
+      const raw = localStorage.getItem(SP_KEY);
+      return raw ? JSON.parse(raw) : SP_DEFAULTS;
+    } catch { return SP_DEFAULTS; }
+  });
+  const [editMode, setEditMode]       = useState(false);
+  const [addingCourse, setAddingCourse] = useState(false);
+  const [addingProject, setAddingProject] = useState(false);
+  const [newCourse, setNewCourse]     = useState({ name: "", description: "", deadline: "", moodleUrl: "" });
+  const [newProject, setNewProject]   = useState({ name: "", description: "", status: "active", url: "" });
+
+  useEffect(() => { localStorage.setItem(SP_KEY, JSON.stringify(data)); }, [data]);
+
+  const STATUS_COLORS = { active: "#6ee7b7", paused: "#fbbf24", done: "#5a6a5a" };
+  const STATUS_FI     = { active: "Aktiivinen", paused: "Tauolla", done: "Valmis" };
+
+  const removeCourse  = (id) => setData(d => ({ ...d, courses:  d.courses.filter(c => c.id !== id) }));
+  const removeProject = (id) => setData(d => ({ ...d, projects: d.projects.filter(p => p.id !== id) }));
+  const cycleStatus   = (id) => setData(d => ({
+    ...d,
+    projects: d.projects.map(p => {
+      if (p.id !== id) return p;
+      return { ...p, status: ({ active: "paused", paused: "done", done: "active" })[p.status] || "active" };
+    }),
+  }));
+
+  const addCourse = () => {
+    if (!newCourse.name.trim()) return;
+    setData(d => ({ ...d, courses: [...d.courses, { ...newCourse, id: Date.now() }] }));
+    setNewCourse({ name: "", description: "", deadline: "", moodleUrl: "" });
+    setAddingCourse(false);
+  };
+  const addProject = () => {
+    if (!newProject.name.trim()) return;
+    setData(d => ({ ...d, projects: [...d.projects, { ...newProject, id: Date.now() }] }));
+    setNewProject({ name: "", description: "", status: "active", url: "" });
+    setAddingProject(false);
+  };
+
+  const inputStyle = { width: "100%", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 2, color: "#e8e8e8", padding: "6px 10px", fontFamily: "inherit", fontSize: 12, outline: "none" };
+
+  return (
+    <div className="card">
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+        <div className="label" style={{ marginBottom: 0 }}>Opinnot & Projektit</div>
+        <button className="btn-ghost" onClick={() => { setEditMode(e => !e); setAddingCourse(false); setAddingProject(false); }} style={{ fontSize: 9 }}>
+          {editMode ? "✓ Valmis" : "✎ Muokkaa"}
+        </button>
+      </div>
+
+      <div className="label" style={{ color: "#6ee7b7", marginBottom: 6 }}>Kurssit</div>
+      {data.courses.length === 0 && <div style={{ fontSize: 11, color: "#5a6a5a", marginBottom: 8 }}>Ei kursseja</div>}
+      {data.courses.map(c => (
+        <div key={c.id} style={{ padding: "8px 10px", background: "rgba(110,231,183,0.06)", border: "1px solid rgba(110,231,183,0.12)", borderRadius: 2, marginBottom: 6 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+            <div style={{ fontSize: 13, color: "#e8e8e8", flex: 1 }}>{c.name}</div>
+            {editMode && <button className="btn-ghost" onClick={() => removeCourse(c.id)} style={{ fontSize: 9, padding: "1px 5px", marginLeft: 6 }}>✕</button>}
+          </div>
+          {c.description && <div style={{ fontSize: 11, color: "#7a8a7a", marginTop: 2 }}>{c.description}</div>}
+          <div style={{ display: "flex", gap: 10, marginTop: 4, fontSize: 10 }}>
+            {c.deadline && <span style={{ color: "#5a6a5a" }}>DL: <span style={{ color: "#c4c4c4" }}>{c.deadline}</span></span>}
+            {c.moodleUrl && <a href={c.moodleUrl} target="_blank" rel="noreferrer" style={{ color: "#9ad4f5", textDecoration: "none" }}>Moodle →</a>}
+          </div>
+        </div>
+      ))}
+      {editMode && !addingCourse && (
+        <button className="btn-ghost" onClick={() => setAddingCourse(true)} style={{ fontSize: 9, width: "100%", marginBottom: 10 }}>+ Lisää kurssi</button>
+      )}
+      {editMode && addingCourse && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 5, marginBottom: 10 }}>
+          <input type="text" placeholder="Kurssin nimi *" value={newCourse.name} onChange={e => setNewCourse(p => ({ ...p, name: e.target.value }))} style={inputStyle} />
+          <input type="text" placeholder="Kuvaus" value={newCourse.description} onChange={e => setNewCourse(p => ({ ...p, description: e.target.value }))} style={inputStyle} />
+          <input type="date" value={newCourse.deadline} onChange={e => setNewCourse(p => ({ ...p, deadline: e.target.value }))} style={{ ...inputStyle, colorScheme: "dark" }} />
+          <input type="url" placeholder="Moodle URL" value={newCourse.moodleUrl} onChange={e => setNewCourse(p => ({ ...p, moodleUrl: e.target.value }))} style={inputStyle} />
+          <div style={{ display: "flex", gap: 4 }}>
+            <button className="btn" style={{ flex: 1 }} onClick={addCourse}>+ Lisää</button>
+            <button className="btn-ghost" onClick={() => setAddingCourse(false)}>✕</button>
+          </div>
+        </div>
+      )}
+
+      <div className="label" style={{ color: "#9ad4f5", marginBottom: 6, marginTop: 8 }}>Projektit</div>
+      {data.projects.length === 0 && <div style={{ fontSize: 11, color: "#5a6a5a", marginBottom: 8 }}>Ei projekteja</div>}
+      {data.projects.map(p => (
+        <div key={p.id} style={{ padding: "8px 10px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 2, marginBottom: 6 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 6 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13, color: "#d4d4d4" }}>{p.name}</div>
+              {p.description && <div style={{ fontSize: 11, color: "#7a8a7a", marginTop: 2 }}>{p.description}</div>}
+              {p.url && <a href={p.url} target="_blank" rel="noreferrer" style={{ fontSize: 10, color: "#9ad4f5", textDecoration: "none", display: "block", marginTop: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.url.replace(/^https?:\/\//, "").slice(0, 40)} →</a>}
+            </div>
+            <div style={{ display: "flex", gap: 4, flexShrink: 0, alignItems: "center" }}>
+              <button className="btn-ghost" onClick={() => cycleStatus(p.id)} style={{ fontSize: 9, padding: "2px 6px", color: STATUS_COLORS[p.status], borderColor: STATUS_COLORS[p.status] + "40" }}>
+                {STATUS_FI[p.status]}
+              </button>
+              {editMode && <button className="btn-ghost" onClick={() => removeProject(p.id)} style={{ fontSize: 9, padding: "1px 5px" }}>✕</button>}
+            </div>
+          </div>
+        </div>
+      ))}
+      {editMode && !addingProject && (
+        <button className="btn-ghost" onClick={() => setAddingProject(true)} style={{ fontSize: 9, width: "100%" }}>+ Lisää projekti</button>
+      )}
+      {editMode && addingProject && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 5, marginTop: 6 }}>
+          <input type="text" placeholder="Projektin nimi *" value={newProject.name} onChange={e => setNewProject(p => ({ ...p, name: e.target.value }))} style={inputStyle} />
+          <input type="text" placeholder="Kuvaus" value={newProject.description} onChange={e => setNewProject(p => ({ ...p, description: e.target.value }))} style={inputStyle} />
+          <select value={newProject.status} onChange={e => setNewProject(p => ({ ...p, status: e.target.value }))} style={{ ...inputStyle }}>
+            <option value="active">Aktiivinen</option>
+            <option value="paused">Tauolla</option>
+            <option value="done">Valmis</option>
+          </select>
+          <input type="url" placeholder="URL (valinnainen)" value={newProject.url} onChange={e => setNewProject(p => ({ ...p, url: e.target.value }))} style={inputStyle} />
+          <div style={{ display: "flex", gap: 4 }}>
+            <button className="btn" style={{ flex: 1 }} onClick={addProject}>+ Lisää</button>
+            <button className="btn-ghost" onClick={() => setAddingProject(false)}>✕</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Daily Routines ────────────────────────────────────────────────────────────
+
+const RT_KEY = "routines";
+const RT_DEFAULTS = {
+  config: { waterGoal: 8, supplements: ["D-vitamiini", "Omega-3", "Magnesium"], habits: ["Liikunta", "Lukeminen", "Ulkoilu"] },
+  days: {},
+};
+
+function DailyRoutinesWidget() {
+  const [store, setStore] = useState(() => {
+    try {
+      const raw = localStorage.getItem(RT_KEY);
+      const s = raw ? JSON.parse(raw) : { ...RT_DEFAULTS };
+      if (!s.config) s.config = { ...RT_DEFAULTS.config };
+      if (!s.days)   s.days   = {};
+      return s;
+    } catch { return { config: { ...RT_DEFAULTS.config }, days: {} }; }
+  });
+  const [editMode, setEditMode] = useState(false);
+  const [newSupp, setNewSupp]   = useState("");
+  const [newHabit, setNewHabit] = useState("");
+
+  useEffect(() => { localStorage.setItem(RT_KEY, JSON.stringify(store)); }, [store]);
+
+  const today    = fiStr();
+  const todayRaw = store.days[today] || {};
+  const water    = todayRaw.water || 0;
+  const supps    = todayRaw.supplements || {};
+  const habits   = todayRaw.habits || {};
+
+  const patchToday = (fn) => setStore(s => {
+    const d = s.days[today] || { water: 0, supplements: {}, habits: {} };
+    return { ...s, days: { ...s.days, [today]: fn(d) } };
+  });
+
+  const addWater    = () => patchToday(d => ({ ...d, water: Math.min((d.water || 0) + 1, store.config.waterGoal) }));
+  const removeWater = () => patchToday(d => ({ ...d, water: Math.max((d.water || 0) - 1, 0) }));
+  const toggleSupp  = (n) => patchToday(d => ({ ...d, supplements: { ...(d.supplements || {}), [n]: !(d.supplements || {})[n] } }));
+  const toggleHabit = (n) => patchToday(d => ({ ...d, habits: { ...(d.habits || {}), [n]: !(d.habits || {})[n] } }));
+
+  const addSupp     = () => { if (!newSupp.trim()) return; setStore(s => ({ ...s, config: { ...s.config, supplements: [...s.config.supplements, newSupp.trim()] } })); setNewSupp(""); };
+  const removeSupp  = (n) => setStore(s => ({ ...s, config: { ...s.config, supplements: s.config.supplements.filter(x => x !== n) } }));
+  const addHabit    = () => { if (!newHabit.trim()) return; setStore(s => ({ ...s, config: { ...s.config, habits: [...s.config.habits, newHabit.trim()] } })); setNewHabit(""); };
+  const removeHabit = (n) => setStore(s => ({ ...s, config: { ...s.config, habits: s.config.habits.filter(x => x !== n) } }));
+
+  const streakDays = (habitName) => Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(); d.setDate(d.getDate() - (6 - i));
+    return !!(store.days[fiStr(d)]?.habits?.[habitName]);
+  });
+
+  return (
+    <div className="card">
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+        <div className="label" style={{ marginBottom: 0 }}>Päivän rutiinit</div>
+        <button className="btn-ghost" onClick={() => setEditMode(e => !e)} style={{ fontSize: 9 }}>
+          {editMode ? "✓ Valmis" : "✎ Muokkaa"}
+        </button>
+      </div>
+
+      {/* Water */}
+      <div style={{ marginBottom: 14, paddingBottom: 14, borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
+        <div className="label" style={{ color: "#9ad4f5", marginBottom: 8 }}>Vesi</div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={{ display: "flex", gap: 3, flex: 1, flexWrap: "wrap" }}>
+            {Array.from({ length: store.config.waterGoal }, (_, i) => (
+              <div key={i} style={{ width: 16, height: 16, borderRadius: "50%", background: i < water ? "#9ad4f5" : "rgba(154,212,245,0.1)", border: `1px solid ${i < water ? "#9ad4f5" : "rgba(154,212,245,0.2)"}`, transition: "background 0.15s" }} />
+            ))}
+          </div>
+          <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+            <button className="btn-ghost" onClick={removeWater} style={{ fontSize: 11, padding: "2px 7px" }}>−</button>
+            <button className="btn-ghost" onClick={addWater} style={{ fontSize: 11, padding: "2px 8px", color: "#9ad4f5", borderColor: "rgba(154,212,245,0.3)" }}>+ lasi</button>
+          </div>
+        </div>
+        <div style={{ fontSize: 10, color: "#5a6a5a", marginTop: 5 }}>{water} / {store.config.waterGoal} lasia</div>
+      </div>
+
+      {/* Supplements */}
+      <div style={{ marginBottom: 14, paddingBottom: 14, borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
+        <div className="label" style={{ color: "#fbbf24", marginBottom: 6 }}>Lisäravinteet</div>
+        {store.config.supplements.map(s => (
+          <div key={s} style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0" }}>
+            <div onClick={() => toggleSupp(s)} style={{ width: 15, height: 15, borderRadius: 2, border: `1px solid ${supps[s] ? "#fbbf24" : "#3a4a3a"}`, background: supps[s] ? "rgba(251,191,36,0.2)" : "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              {supps[s] && <span style={{ fontSize: 9, color: "#fbbf24" }}>✓</span>}
+            </div>
+            <span style={{ fontSize: 12, color: supps[s] ? "#c4c4c4" : "#6a7a6a", flex: 1, cursor: "pointer" }} onClick={() => toggleSupp(s)}>{s}</span>
+            {editMode && <button className="btn-ghost" onClick={() => removeSupp(s)} style={{ fontSize: 9, padding: "1px 5px" }}>✕</button>}
+          </div>
+        ))}
+        {editMode && (
+          <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
+            <input type="text" value={newSupp} onChange={e => setNewSupp(e.target.value)} placeholder="Uusi lisäravinne" style={{ flex: 1 }} onKeyDown={e => e.key === "Enter" && addSupp()} />
+            <button className="btn" onClick={addSupp}>+</button>
+          </div>
+        )}
+      </div>
+
+      {/* Habits */}
+      <div>
+        <div className="label" style={{ color: "#c4b5fd", marginBottom: 6 }}>Tavat</div>
+        {store.config.habits.map(h => {
+          const streak = streakDays(h);
+          return (
+            <div key={h} style={{ padding: "5px 0", borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <div onClick={() => toggleHabit(h)} style={{ width: 15, height: 15, borderRadius: 2, border: `1px solid ${habits[h] ? "#c4b5fd" : "#3a4a3a"}`, background: habits[h] ? "rgba(196,181,253,0.2)" : "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                  {habits[h] && <span style={{ fontSize: 9, color: "#c4b5fd" }}>✓</span>}
+                </div>
+                <span style={{ fontSize: 12, color: habits[h] ? "#c4c4c4" : "#6a7a6a", flex: 1, cursor: "pointer" }} onClick={() => toggleHabit(h)}>{h}</span>
+                <div style={{ display: "flex", gap: 2, flexShrink: 0 }}>
+                  {streak.map((done, i) => (
+                    <div key={i} style={{ width: 6, height: 6, borderRadius: "50%", background: done ? "#c4b5fd" : "rgba(196,181,253,0.12)" }} />
+                  ))}
+                </div>
+                {editMode && <button className="btn-ghost" onClick={() => removeHabit(h)} style={{ fontSize: 9, padding: "1px 5px" }}>✕</button>}
+              </div>
+            </div>
+          );
+        })}
+        {editMode && (
+          <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
+            <input type="text" value={newHabit} onChange={e => setNewHabit(e.target.value)} placeholder="Uusi tapa" style={{ flex: 1 }} onKeyDown={e => e.key === "Enter" && addHabit()} />
+            <button className="btn" onClick={addHabit}>+</button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Weekly Goals ──────────────────────────────────────────────────────────────
+
+const WG_KEY = "weeklyGoals";
+
+function getMonday(d = new Date()) {
+  const dt = new Date(d);
+  const day = dt.getDay();
+  dt.setDate(dt.getDate() + (day === 0 ? -6 : 1 - day));
+  return fiStr(dt);
+}
+
+function WeeklyGoalsWidget() {
+  const [store, setStore] = useState(() => {
+    try {
+      const raw    = localStorage.getItem(WG_KEY);
+      const monday = getMonday();
+      if (!raw) return { current: { weekStart: monday, goals: [] }, history: [] };
+      const s = JSON.parse(raw);
+      if (s.current.weekStart !== monday) {
+        return {
+          current: { weekStart: monday, goals: [] },
+          history: [s.current, ...(s.history || [])].slice(0, 3),
+        };
+      }
+      return s;
+    } catch { return { current: { weekStart: getMonday(), goals: [] }, history: [] }; }
+  });
+  const [editMode, setEditMode]       = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+  const [newTitle, setNewTitle]       = useState("");
+  const [newCat, setNewCat]           = useState("");
+
+  useEffect(() => { localStorage.setItem(WG_KEY, JSON.stringify(store)); }, [store]);
+
+  const goals = store.current.goals;
+  const done  = goals.filter(g => g.done).length;
+  const pct   = goals.length > 0 ? Math.round((done / goals.length) * 100) : 0;
+
+  const toggleGoal = (id) => setStore(s => ({ ...s, current: { ...s.current, goals: s.current.goals.map(g => g.id === id ? { ...g, done: !g.done } : g) } }));
+  const removeGoal = (id) => setStore(s => ({ ...s, current: { ...s.current, goals: s.current.goals.filter(g => g.id !== id) } }));
+  const addGoal    = () => {
+    if (!newTitle.trim() || goals.length >= 5) return;
+    setStore(s => ({ ...s, current: { ...s.current, goals: [...s.current.goals, { id: Date.now(), title: newTitle.trim(), category: newCat.trim(), done: false }] } }));
+    setNewTitle(""); setNewCat("");
+  };
+
+  return (
+    <div className="card">
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+        <div className="label" style={{ marginBottom: 0 }}>Viikon tavoitteet</div>
+        <div style={{ display: "flex", gap: 4 }}>
+          <button className="btn-ghost" onClick={() => { setShowHistory(h => !h); setEditMode(false); }} style={{ fontSize: 9 }}>
+            {showHistory ? "← Viikko" : "Historia"}
+          </button>
+          {!showHistory && (
+            <button className="btn-ghost" onClick={() => setEditMode(e => !e)} style={{ fontSize: 9 }}>
+              {editMode ? "✓ Valmis" : "✎ Muokkaa"}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {showHistory ? (
+        <div>
+          {store.history.length === 0 && (
+            <div style={{ fontSize: 11, color: "#5a6a5a", textAlign: "center", padding: "12px 0" }}>Ei historiatietoja</div>
+          )}
+          {store.history.map((week, wi) => {
+            const wDone = week.goals.filter(g => g.done).length;
+            const wPct  = week.goals.length > 0 ? Math.round(wDone / week.goals.length * 100) : 0;
+            return (
+              <div key={wi} style={{ marginBottom: 12, paddingBottom: 12, borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+                  <span style={{ fontSize: 10, color: "#7a8a7a" }}>Viikko {week.weekStart}</span>
+                  <span style={{ fontSize: 10, color: "#6ee7b7" }}>{wDone}/{week.goals.length} · {wPct}%</span>
+                </div>
+                {week.goals.map(g => (
+                  <div key={g.id} style={{ fontSize: 11, color: g.done ? "#5a6a5a" : "#9a9a9a", textDecoration: g.done ? "line-through" : "none", padding: "2px 0" }}>
+                    {g.done ? "✓ " : "· "}{g.title}
+                    {g.category && <span style={{ fontSize: 9, color: "#4a5a4a", marginLeft: 6 }}>[{g.category}]</span>}
+                  </div>
+                ))}
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div>
+          {goals.length > 0 && (
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 5 }}>
+                <span style={{ fontSize: 10, color: "#5a6a5a" }}>{done}/{goals.length} tavoitetta</span>
+                <span style={{ fontSize: 10, color: pct >= 80 ? "#6ee7b7" : "#9a9a9a" }}>{pct}%</span>
+              </div>
+              <div style={{ height: 4, background: "rgba(255,255,255,0.07)", borderRadius: 2 }}>
+                <div style={{ width: `${pct}%`, height: "100%", background: "#6ee7b7", borderRadius: 2, transition: "width 0.3s" }} />
+              </div>
+            </div>
+          )}
+          {goals.length === 0 && !editMode && (
+            <div style={{ fontSize: 11, color: "#5a6a5a", textAlign: "center", padding: "12px 0" }}>Ei tavoitteita tällä viikolla</div>
+          )}
+          {goals.map(g => (
+            <div key={g.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 0", borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
+              <div onClick={() => toggleGoal(g.id)} style={{ width: 15, height: 15, borderRadius: 2, border: `1px solid ${g.done ? "#6ee7b7" : "#3a4a3a"}`, background: g.done ? "rgba(110,231,183,0.2)" : "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                {g.done && <span style={{ fontSize: 9, color: "#6ee7b7" }}>✓</span>}
+              </div>
+              <span style={{ fontSize: 12, color: g.done ? "#5a6a5a" : "#d4d4d4", textDecoration: g.done ? "line-through" : "none", flex: 1, cursor: "pointer" }} onClick={() => toggleGoal(g.id)}>
+                {g.title}
+              </span>
+              {g.category && <span style={{ fontSize: 9, color: "#4a5a4a", flexShrink: 0 }}>[{g.category}]</span>}
+              {editMode && <button className="btn-ghost" onClick={() => removeGoal(g.id)} style={{ fontSize: 9, padding: "1px 5px" }}>✕</button>}
+            </div>
+          ))}
+          {editMode && goals.length < 5 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 5, marginTop: 8 }}>
+              <input type="text" placeholder="Tavoite (max 5)" value={newTitle} onChange={e => setNewTitle(e.target.value)} style={{ width: "100%" }} onKeyDown={e => e.key === "Enter" && addGoal()} />
+              <input type="text" placeholder="Kategoria (valinnainen)" value={newCat} onChange={e => setNewCat(e.target.value)} style={{ width: "100%" }} />
+              <button className="btn" style={{ width: "100%" }} onClick={addGoal}>+ Lisää tavoite</button>
+            </div>
+          )}
+          {editMode && goals.length >= 5 && (
+            <div style={{ fontSize: 10, color: "#5a6a5a", marginTop: 6, textAlign: "center" }}>Max 5 tavoitetta / viikko</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function App() {
   return (
     <PasswordGate>
@@ -779,6 +1190,8 @@ function MorningDashboard({ onLogout }) {
   const [newEventTime, setNewEventTime] = useState("");
   const [newEventTitle, setNewEventTitle] = useState("");
   const [newTask, setNewTask] = useState("");
+  const [forestReminders, setForestReminders] = useForestReminders();
+  const [forestEditMode, setForestEditMode]   = useState(false);
 
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 30000);
@@ -797,7 +1210,7 @@ function MorningDashboard({ onLogout }) {
   const todayName = DAYS[dayIndex];
   const todayEvents = weekPlan[todayName] || [];
   const month = now.getMonth() + 1;
-  const forestReminder = FOREST_REMINDERS[month];
+  const forestReminder = forestReminders[month] || FOREST_REMINDERS[month];
   const addEvent = (day) => {
     if (!newEventTime || !newEventTitle) return;
     const updated = {
@@ -905,8 +1318,24 @@ function MorningDashboard({ onLogout }) {
             ))
           )}
           <div style={{ marginTop: 14, paddingTop: 12, borderTop: "1px solid rgba(255,255,255,0.06)" }}>
-            <div className="label" style={{ marginBottom: 6 }}>🌲 Metsämuistutus</div>
-            <div style={{ fontSize: 12, color: "#a8c4a8", lineHeight: 1.5 }}>{forestReminder}</div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+              <div className="label" style={{ marginBottom: 0 }}>🌲 Metsämuistutus</div>
+              <button className="btn-ghost" onClick={() => setForestEditMode(m => !m)} style={{ fontSize: 9 }}>
+                {forestEditMode ? "✓ Valmis" : "✎"}
+              </button>
+            </div>
+            {forestEditMode ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                {Array.from({ length: 12 }, (_, i) => i + 1).map(m => (
+                  <div key={m} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                    <span style={{ fontSize: 10, color: "#5a6a5a", width: 18, flexShrink: 0, textAlign: "right" }}>{m}.</span>
+                    <input type="text" value={forestReminders[m] || ""} onChange={e => setForestReminders(r => ({ ...r, [m]: e.target.value }))} style={{ flex: 1, fontSize: 11 }} />
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div style={{ fontSize: 12, color: "#a8c4a8", lineHeight: 1.5 }}>{forestReminder}</div>
+            )}
           </div>
         </div>
 
@@ -952,34 +1381,16 @@ function MorningDashboard({ onLogout }) {
         </div>
 
         {/* STUDIES & PROJECTS */}
-        <div className="card">
-          <div className="label">Opinnot & Projektit</div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            <div style={{ padding: "10px 12px", background: "rgba(110,231,183,0.06)", border: "1px solid rgba(110,231,183,0.12)", borderRadius: 2 }}>
-              <div style={{ fontSize: 10, color: "#5a6a5a", marginBottom: 4 }}>AKTIIVINEN KURSSI</div>
-              <div style={{ fontSize: 13, color: "#e8e8e8" }}>Product Line Engineering</div>
-              <div style={{ fontSize: 11, color: "#7a8a7a", marginTop: 2 }}>Kiinteistöseuranta-projekti — Evalance/FeatureIDE</div>
-            </div>
-            <div style={{ padding: "10px 12px", background: "rgba(154,212,245,0.06)", border: "1px solid rgba(154,212,245,0.12)", borderRadius: 2 }}>
-              <div style={{ fontSize: 10, color: "#5a6a5a", marginBottom: 4 }}>ML/AI ROADMAP</div>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <div style={{ fontSize: 13, color: "#9ad4f5" }}>Viikko 8 / 26</div>
-                <div style={{ fontSize: 10, color: "#5a6a5a" }}>31%</div>
-              </div>
-              <div style={{ marginTop: 6, height: 4, background: "rgba(255,255,255,0.07)", borderRadius: 2 }}>
-                <div style={{ width: "31%", height: "100%", background: "#9ad4f5", borderRadius: 2 }} />
-              </div>
-            </div>
-            <div style={{ padding: "10px 12px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 2 }}>
-              <div style={{ fontSize: 10, color: "#5a6a5a", marginBottom: 4 }}>PROJEKTI</div>
-              <div style={{ fontSize: 13, color: "#d4d4d4" }}>Metsädashboard MVP</div>
-              <div style={{ fontSize: 11, color: "#7a8a7a", marginTop: 2 }}>WFS API + LiDAR — Python</div>
-            </div>
-          </div>
-        </div>
+        <StudiesProjectsCard />
 
         {/* TIME TRACKER */}
         <TimeTrackerWidget />
+
+        {/* DAILY ROUTINES */}
+        <DailyRoutinesWidget />
+
+        {/* WEEKLY GOALS */}
+        <WeeklyGoalsWidget />
 
       </div>
 
