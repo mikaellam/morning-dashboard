@@ -129,8 +129,6 @@ const MOCK_MAINTENANCE = [
   { id: 4, task: "Tilaa polttopuut syksylle", done: false },
 ];
 
-const MOCK_ELECTRICITY = [6.2, 8.1, 7.4, 5.9, 9.3, 11.2, 10.8, 8.7, 7.1, 6.4, 5.8, 7.2, 8.9, 10.1, 9.4, 8.2, 7.6, 6.8, 5.5, 6.1, 7.8, 9.2, 10.5, 8.3];
-
 const WMO = {
   0:  { fi: "Selkeää",              emoji: "☀️"  },
   1:  { fi: "Pääosin selkeää",      emoji: "🌤️"  },
@@ -285,6 +283,126 @@ function WeatherCard() {
   );
 }
 
+function useElectricity() {
+  const [state, setState] = useState({ loading: true, error: null, today: null, tomorrowAvg: null });
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const res = await fetch("https://api.spot-hinta.fi/TodayAndDayForward");
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const raw = await res.json();
+
+        const todayFi    = new Date().toLocaleDateString("sv-SE", { timeZone: "Europe/Helsinki" });
+        const tomorrowFi = (() => { const d = new Date(); d.setDate(d.getDate() + 1); return d.toLocaleDateString("sv-SE", { timeZone: "Europe/Helsinki" }); })();
+
+        const prices24 = new Array(24).fill(null);
+        const tomorrowItems = [];
+
+        raw.forEach(item => {
+          const date = item.DateTime.slice(0, 10);
+          const hour = parseInt(item.DateTime.slice(11, 13), 10);
+          const snt  = item.PriceWithTax / 10;
+          if (date === todayFi)    prices24[hour] = snt;
+          if (date === tomorrowFi) tomorrowItems.push(snt);
+        });
+
+        const tomorrowAvg = tomorrowItems.length > 0
+          ? tomorrowItems.reduce((a, b) => a + b, 0) / tomorrowItems.length
+          : null;
+
+        setState({ loading: false, error: null, today: prices24, tomorrowAvg });
+      } catch (e) {
+        setState({ loading: false, error: e.message, today: null, tomorrowAvg: null });
+      }
+    };
+    load();
+    const t = setInterval(load, 60 * 60 * 1000);
+    return () => clearInterval(t);
+  }, []);
+  return state;
+}
+
+function ElectricityCard() {
+  const { loading, error, today, tomorrowAvg } = useElectricity();
+  const currentHour = new Date().getHours();
+
+  if (loading) {
+    return (
+      <div className="card">
+        <div className="label">Pörssisähkö</div>
+        <div style={{ color: "#5a6a5a", fontSize: 12, padding: "24px 0", textAlign: "center" }}>
+          Ladataan hintatietoja…
+        </div>
+      </div>
+    );
+  }
+
+  if (error || !today) {
+    return (
+      <div className="card">
+        <div className="label">Pörssisähkö</div>
+        <div style={{ color: "#f87171", fontSize: 11, padding: "8px 0" }}>
+          {error ? `Virhe: ${error}` : "Hintatietoja ei saatavilla"}
+        </div>
+      </div>
+    );
+  }
+
+  const priceColor = (p) => p == null ? "#3a4a3a" : p < 5 ? "#4ade80" : p < 10 ? "#fbbf24" : "#f87171";
+  const currentPrice = today[currentHour];
+  const validPrices  = today.filter(p => p != null);
+  const avgPrice     = validPrices.length > 0 ? validPrices.reduce((a, b) => a + b, 0) / validPrices.length : null;
+  const maxPrice     = Math.max(...validPrices.map(p => Math.max(p, 0)), 1);
+
+  return (
+    <div className="card">
+      <div className="label">Pörssisähkö</div>
+
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 16 }}>
+        <div>
+          <span style={{ fontSize: 32, fontWeight: 500, color: priceColor(currentPrice), fontFamily: "'Playfair Display', serif" }}>
+            {currentPrice != null ? currentPrice.toFixed(1) : "—"}
+          </span>
+          <span style={{ fontSize: 12, color: "#5a6a5a", marginLeft: 4 }}>snt/kWh nyt</span>
+        </div>
+        <div style={{ textAlign: "right" }}>
+          <div style={{ fontSize: 11, color: "#5a6a5a" }}>Tänään ka.</div>
+          <div style={{ fontSize: 16, color: "#9a9a9a" }}>
+            {avgPrice != null ? avgPrice.toFixed(1) : "—"} snt
+          </div>
+          {tomorrowAvg != null && (
+            <div style={{ fontSize: 10, color: "#5a6a5a", marginTop: 4 }}>
+              Huomenna ka.{" "}
+              <span style={{ color: priceColor(tomorrowAvg) }}>{tomorrowAvg.toFixed(1)} snt</span>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 40 }}>
+        {today.map((price, i) => {
+          const h = price != null ? Math.max(4, (Math.max(price, 0) / maxPrice) * 40) : 4;
+          const isCurrent = i === currentHour;
+          const c = priceColor(price);
+          return (
+            <div
+              key={i}
+              className="bar"
+              title={price != null ? `${i}:00 — ${price.toFixed(1)} snt/kWh` : `${i}:00 — ei tietoa`}
+              style={{ height: h, flex: 1, background: c, opacity: isCurrent ? 1 : 0.35, outline: isCurrent ? `1px solid ${c}` : "none" }}
+            />
+          );
+        })}
+      </div>
+      <div style={{ display: "flex", justifyContent: "space-between", marginTop: 4 }}>
+        <span style={{ fontSize: 9, color: "#3a4a3a" }}>00</span>
+        <span style={{ fontSize: 9, color: "#3a4a3a" }}>12</span>
+        <span style={{ fontSize: 9, color: "#3a4a3a" }}>23</span>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   return (
     <PasswordGate>
@@ -325,11 +443,6 @@ function MorningDashboard({ onLogout }) {
   const todayEvents = weekPlan[todayName] || [];
   const month = now.getMonth() + 1;
   const forestReminder = FOREST_REMINDERS[month];
-  const currentHour = now.getHours();
-  const currentPrice = MOCK_ELECTRICITY[currentHour];
-  const avgPrice = (MOCK_ELECTRICITY.reduce((a, b) => a + b, 0) / 24).toFixed(1);
-  const priceColor = currentPrice < 7 ? "#4ade80" : currentPrice < 10 ? "#fbbf24" : "#f87171";
-
   const addEvent = (day) => {
     if (!newEventTime || !newEventTitle) return;
     const updated = {
@@ -443,38 +556,7 @@ function MorningDashboard({ onLogout }) {
         </div>
 
         {/* ELECTRICITY */}
-        <div className="card">
-          <div className="label">Pörssisähkö</div>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 16 }}>
-            <div>
-              <span style={{ fontSize: 32, fontWeight: 500, color: priceColor, fontFamily: "'Playfair Display', serif" }}>{currentPrice.toFixed(1)}</span>
-              <span style={{ fontSize: 12, color: "#5a6a5a", marginLeft: 4 }}>snt/kWh nyt</span>
-            </div>
-            <div style={{ textAlign: "right" }}>
-              <div style={{ fontSize: 11, color: "#5a6a5a" }}>Päiväkeskiarvo</div>
-              <div style={{ fontSize: 16, color: "#9a9a9a" }}>{avgPrice} snt</div>
-            </div>
-          </div>
-          {/* Bar chart */}
-          <div style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 40 }}>
-            {MOCK_ELECTRICITY.map((v, i) => {
-              const h = Math.max(4, (v / 14) * 40);
-              const c = v < 7 ? "#4ade80" : v < 10 ? "#fbbf24" : "#f87171";
-              const isCurrent = i === currentHour;
-              return (
-                <div key={i} title={`${i}:00 — ${v} snt`}
-                  className="bar"
-                  style={{ height: h, flex: 1, background: c, opacity: isCurrent ? 1 : 0.35, outline: isCurrent ? `1px solid ${c}` : "none" }}
-                />
-              );
-            })}
-          </div>
-          <div style={{ display: "flex", justifyContent: "space-between", marginTop: 4 }}>
-            <span style={{ fontSize: 9, color: "#3a4a3a" }}>00</span>
-            <span style={{ fontSize: 9, color: "#3a4a3a" }}>12</span>
-            <span style={{ fontSize: 9, color: "#3a4a3a" }}>23</span>
-          </div>
-        </div>
+        <ElectricityCard />
 
         {/* WEATHER */}
         <WeatherCard />
@@ -597,7 +679,7 @@ function MorningDashboard({ onLogout }) {
       {/* Footer */}
       <div style={{ padding: "0 32px 20px", display: "flex", justifyContent: "space-between", fontSize: 10, color: "#2a3a2a", letterSpacing: "0.1em" }}>
         <span>MORNING DASHBOARD v0.2</span>
-        <span>SÄÄ: OPEN-METEO · SÄHKÖ: MOCK-DATA</span>
+        <span>SÄÄ: OPEN-METEO · SÄHKÖ: SPOT-HINTA.FI</span>
       </div>
     </div>
   );
