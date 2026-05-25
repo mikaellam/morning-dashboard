@@ -1,4 +1,100 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
+
+const AUTH_KEY = "dashboard_auth";
+
+function PasswordGate({ children }) {
+  const [authed, setAuthed] = useState(() => localStorage.getItem(AUTH_KEY) === "1");
+  const [input, setInput] = useState("");
+  const [shake, setShake] = useState(false);
+
+  const attempt = useCallback(() => {
+    if (input === process.env.REACT_APP_DASHBOARD_PASSWORD) {
+      localStorage.setItem(AUTH_KEY, "1");
+      setAuthed(true);
+    } else {
+      setShake(true);
+      setInput("");
+      setTimeout(() => setShake(false), 500);
+    }
+  }, [input]);
+
+  if (authed) return children({ onLogout: () => { localStorage.removeItem(AUTH_KEY); setAuthed(false); } });
+
+  return (
+    <div style={{
+      minHeight: "100vh",
+      background: "#0d1117",
+      backgroundImage: "radial-gradient(ellipse at 20% 0%, rgba(16,42,32,0.7) 0%, transparent 60%), radial-gradient(ellipse at 80% 100%, rgba(10,28,48,0.6) 0%, transparent 60%)",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      fontFamily: "'DM Mono', 'Fira Mono', 'Courier New', monospace",
+    }}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Playfair+Display:wght@400;700&display=swap');
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        @keyframes shake {
+          0%, 100% { transform: translateX(0); }
+          20%, 60% { transform: translateX(-6px); }
+          40%, 80% { transform: translateX(6px); }
+        }
+        .pw-shake { animation: shake 0.4s ease; }
+      `}</style>
+      <div style={{ textAlign: "center", width: 280 }}>
+        <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 22, color: "#f0f0f0", marginBottom: 6 }}>
+          Hyvää huomenta
+        </div>
+        <div style={{ fontSize: 10, color: "#3a4a3a", letterSpacing: "0.15em", textTransform: "uppercase", marginBottom: 32 }}>
+          Morning Dashboard
+        </div>
+        <div className={shake ? "pw-shake" : ""} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <input
+            type="password"
+            value={input}
+            autoFocus
+            placeholder="salasana"
+            onChange={e => setInput(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter") attempt(); }}
+            style={{
+              background: "rgba(255,255,255,0.04)",
+              border: `1px solid ${shake ? "rgba(248,113,113,0.5)" : "rgba(255,255,255,0.1)"}`,
+              borderRadius: 2,
+              color: "#e8e8e8",
+              padding: "10px 14px",
+              fontFamily: "inherit",
+              fontSize: 14,
+              outline: "none",
+              textAlign: "center",
+              letterSpacing: "0.2em",
+              width: "100%",
+              transition: "border-color 0.2s",
+            }}
+          />
+          <button
+            onClick={attempt}
+            style={{
+              background: "rgba(110,231,183,0.08)",
+              border: "1px solid rgba(110,231,183,0.25)",
+              color: "#6ee7b7",
+              padding: "9px 0",
+              borderRadius: 2,
+              fontFamily: "inherit",
+              fontSize: 11,
+              letterSpacing: "0.15em",
+              textTransform: "uppercase",
+              cursor: "pointer",
+              transition: "background 0.2s",
+            }}
+            onMouseOver={e => e.currentTarget.style.background = "rgba(110,231,183,0.16)"}
+            onMouseOut={e => e.currentTarget.style.background = "rgba(110,231,183,0.08)"}
+          >
+            Kirjaudu
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 const DAYS = ["Maanantai", "Tiistai", "Keskiviikko", "Torstai", "Perjantai", "Lauantai", "Sunnuntai"];
 const DAYS_SHORT = ["Ma", "Ti", "Ke", "To", "Pe", "La", "Su"];
@@ -35,7 +131,15 @@ const MOCK_MAINTENANCE = [
 
 const MOCK_ELECTRICITY = [6.2, 8.1, 7.4, 5.9, 9.3, 11.2, 10.8, 8.7, 7.1, 6.4, 5.8, 7.2, 8.9, 10.1, 9.4, 8.2, 7.6, 6.8, 5.5, 6.1, 7.8, 9.2, 10.5, 8.3];
 
-export default function MorningDashboard() {
+export default function App() {
+  return (
+    <PasswordGate>
+      {({ onLogout }) => <MorningDashboard onLogout={onLogout} />}
+    </PasswordGate>
+  );
+}
+
+function MorningDashboard({ onLogout }) {
   const [now, setNow] = useState(new Date());
   const [weekPlan, setWeekPlan] = useState(() => {
     try { return JSON.parse(localStorage.getItem("weekPlan")) || INITIAL_WEEK; } catch { return INITIAL_WEEK; }
@@ -156,6 +260,9 @@ export default function MorningDashboard() {
         </div>
         <div style={{ textAlign: "right" }}>
           <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 36, fontWeight: 400, color: "#6ee7b7", letterSpacing: "-0.03em" }}>{timeStr}</div>
+          <button className="btn-ghost" onClick={onLogout} style={{ marginTop: 6, fontSize: 9, letterSpacing: "0.1em" }}>
+            kirjaudu ulos
+          </button>
         </div>
       </div>
 
