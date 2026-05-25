@@ -131,6 +131,160 @@ const MOCK_MAINTENANCE = [
 
 const MOCK_ELECTRICITY = [6.2, 8.1, 7.4, 5.9, 9.3, 11.2, 10.8, 8.7, 7.1, 6.4, 5.8, 7.2, 8.9, 10.1, 9.4, 8.2, 7.6, 6.8, 5.5, 6.1, 7.8, 9.2, 10.5, 8.3];
 
+const WMO = {
+  0:  { fi: "Selkeää",              emoji: "☀️"  },
+  1:  { fi: "Pääosin selkeää",      emoji: "🌤️"  },
+  2:  { fi: "Puolipilvistä",        emoji: "⛅"  },
+  3:  { fi: "Pilvistä",             emoji: "☁️"  },
+  45: { fi: "Sumua",                emoji: "🌫️"  },
+  48: { fi: "Jäätävää sumua",       emoji: "🌫️"  },
+  51: { fi: "Kevyttä tihkua",       emoji: "🌦️"  },
+  53: { fi: "Tihkusadetta",         emoji: "🌦️"  },
+  55: { fi: "Tiheää tihkua",        emoji: "🌦️"  },
+  61: { fi: "Kevyttä sadetta",      emoji: "🌧️"  },
+  63: { fi: "Sadetta",              emoji: "🌧️"  },
+  65: { fi: "Rankkaa sadetta",      emoji: "🌧️"  },
+  71: { fi: "Kevyttä lumisadetta",  emoji: "🌨️"  },
+  73: { fi: "Lumisadetta",          emoji: "🌨️"  },
+  75: { fi: "Tiheää lumisadetta",   emoji: "🌨️"  },
+  77: { fi: "Lumirakeita",          emoji: "🌨️"  },
+  80: { fi: "Kuuroja",              emoji: "🌦️"  },
+  81: { fi: "Kuuroja",              emoji: "🌧️"  },
+  82: { fi: "Rankkoja kuuroja",     emoji: "🌧️"  },
+  85: { fi: "Lumikuuroja",          emoji: "🌨️"  },
+  86: { fi: "Rankkoja lumikuuroja", emoji: "🌨️"  },
+  95: { fi: "Ukkosta",              emoji: "⛈️"  },
+  96: { fi: "Ukkosta ja rakeita",   emoji: "⛈️"  },
+  99: { fi: "Ukkosta ja rakeita",   emoji: "⛈️"  },
+};
+
+function useWeather() {
+  const [state, setState] = useState({ loading: true, error: null, data: null });
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const res = await fetch(
+          "https://api.open-meteo.com/v1/forecast" +
+          "?latitude=61.4991&longitude=23.7871" +
+          "&current_weather=true&current=apparent_temperature" +
+          "&hourly=precipitation" +
+          "&daily=temperature_2m_max,temperature_2m_min" +
+          "&timezone=Europe%2FHelsinki&forecast_days=2&wind_speed_unit=ms"
+        );
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        setState({ loading: false, error: null, data: await res.json() });
+      } catch (e) {
+        setState({ loading: false, error: e.message, data: null });
+      }
+    };
+    load();
+    const t = setInterval(load, 30 * 60 * 1000);
+    return () => clearInterval(t);
+  }, []);
+  return state;
+}
+
+function WeatherCard() {
+  const { loading, error, data } = useWeather();
+
+  if (loading) {
+    return (
+      <div className="card">
+        <div className="label">Sää — Tampere</div>
+        <div style={{ color: "#5a6a5a", fontSize: 12, padding: "24px 0", textAlign: "center" }}>
+          Ladataan säätietoja…
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="card">
+        <div className="label">Sää — Tampere</div>
+        <div style={{ color: "#f87171", fontSize: 11, padding: "8px 0" }}>Virhe: {error}</div>
+      </div>
+    );
+  }
+
+  const { current_weather, current, hourly, daily } = data;
+  const { temperature, windspeed, weathercode } = current_weather;
+  const feelsLike = current.apparent_temperature;
+  const maxT = daily.temperature_2m_max[0];
+  const minT = daily.temperature_2m_min[0];
+  const { fi: condition, emoji } = WMO[weathercode] || { fi: "Vaihtelevaa", emoji: "🌡️" };
+
+  const curIdx = hourly.time.indexOf(current_weather.time);
+  const startIdx = curIdx >= 0 ? curIdx : 0;
+  const precip = hourly.precipitation.slice(startIdx, startIdx + 12);
+  const times  = hourly.time.slice(startIdx, startIdx + 12);
+  const precipMax = Math.max(...precip, 0.5);
+
+  const sign = (v) => (v > 0 ? "+" : "");
+  const tempColor = temperature < 0 ? "#9ad4f5" : temperature < 15 ? "#e8e8e8" : "#fbbf24";
+
+  return (
+    <div className="card">
+      <div className="label">Sää — Tampere</div>
+
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14 }}>
+        <div>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+            <span style={{ fontFamily: "'Playfair Display', serif", fontSize: 36, fontWeight: 400, color: tempColor, letterSpacing: "-0.02em" }}>
+              {sign(temperature)}{Math.round(temperature)}°
+            </span>
+            <span style={{ fontSize: 22, lineHeight: 1 }}>{emoji}</span>
+          </div>
+          <div style={{ fontSize: 12, color: "#9a9a9a", marginTop: 3 }}>{condition}</div>
+        </div>
+
+        <div style={{ textAlign: "right", display: "flex", flexDirection: "column", gap: 5 }}>
+          <div>
+            <span style={{ fontSize: 10, color: "#5a6a5a" }}>Tuntuu </span>
+            <span style={{ fontSize: 13, color: "#c4c4c4" }}>{sign(feelsLike)}{Math.round(feelsLike)}°</span>
+          </div>
+          <div>
+            <span style={{ fontSize: 10, color: "#5a6a5a" }}>Tuuli </span>
+            <span style={{ fontSize: 13, color: "#c4c4c4" }}>{windspeed.toFixed(1)} m/s</span>
+          </div>
+          <div style={{ marginTop: 2 }}>
+            <span style={{ fontSize: 11, color: "#4ade80" }}>↑{sign(maxT)}{Math.round(maxT)}°</span>
+            <span style={{ fontSize: 10, color: "#3a4a3a" }}> / </span>
+            <span style={{ fontSize: 11, color: "#9ad4f5" }}>↓{sign(minT)}{Math.round(minT)}°</span>
+          </div>
+        </div>
+      </div>
+
+      <div style={{ paddingTop: 10, borderTop: "1px solid rgba(255,255,255,0.06)" }}>
+        <div className="label" style={{ marginBottom: 6 }}>Sademäärä — seuraavat 12 h</div>
+        <div style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 32 }}>
+          {precip.map((mm, i) => {
+            const barH = mm > 0 ? Math.max(3, (mm / precipMax) * 32) : 2;
+            const color = mm >= 3 ? "#60a5fa" : "#9ad4f5";
+            const label = times[i] ? times[i].slice(11, 13) + ":00" : "";
+            return (
+              <div key={i} style={{ flex: 1 }}>
+                <div
+                  title={`${label} — ${mm.toFixed(1)} mm`}
+                  style={{
+                    width: "100%", height: barH,
+                    background: mm > 0 ? color : "rgba(255,255,255,0.06)",
+                    borderRadius: 1,
+                  }}
+                />
+              </div>
+            );
+          })}
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between", marginTop: 4 }}>
+          <span style={{ fontSize: 9, color: "#3a4a3a" }}>{times[0]  ? times[0].slice(11, 16)  : ""}</span>
+          <span style={{ fontSize: 9, color: "#3a4a3a" }}>{times[11] ? times[11].slice(11, 16) : ""}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   return (
     <PasswordGate>
@@ -323,26 +477,7 @@ function MorningDashboard({ onLogout }) {
         </div>
 
         {/* WEATHER */}
-        <div className="card">
-          <div className="label">Sää</div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-            <div>
-              <div style={{ fontSize: 10, color: "#5a6a5a", marginBottom: 6 }}>📍 Kotipaikka</div>
-              <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 28, color: "#e8e8e8" }}>+14°</div>
-              <div style={{ fontSize: 11, color: "#7a8a7a", marginTop: 4 }}>Puolipilvistä</div>
-              <div style={{ fontSize: 11, color: "#5a6a5a", marginTop: 2 }}>Tuuli 4 m/s</div>
-            </div>
-            <div>
-              <div style={{ fontSize: 10, color: "#5a6a5a", marginBottom: 6 }}>⛰ Levi</div>
-              <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 28, color: "#9ad4f5" }}>+6°</div>
-              <div style={{ fontSize: 11, color: "#7a8a7a", marginTop: 4 }}>Selkeää</div>
-              <div style={{ fontSize: 11, color: "#5a6a5a", marginTop: 2 }}>Tuuli 7 m/s</div>
-            </div>
-          </div>
-          <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px solid rgba(255,255,255,0.06)", fontSize: 10, color: "#3a4a3a", letterSpacing: "0.05em" }}>
-            MOCK-DATA — Open-Meteo API lisätään vaiheessa 2
-          </div>
-        </div>
+        <WeatherCard />
 
         {/* LEVI BOOKINGS */}
         <div className="card">
@@ -461,8 +596,8 @@ function MorningDashboard({ onLogout }) {
 
       {/* Footer */}
       <div style={{ padding: "0 32px 20px", display: "flex", justifyContent: "space-between", fontSize: 10, color: "#2a3a2a", letterSpacing: "0.1em" }}>
-        <span>MORNING DASHBOARD v0.1 — STAATTINEN PROTOTYYPPI</span>
-        <span>VAIHE 2: API-INTEGRAATIOT</span>
+        <span>MORNING DASHBOARD v0.2</span>
+        <span>SÄÄ: OPEN-METEO · SÄHKÖ: MOCK-DATA</span>
       </div>
     </div>
   );
