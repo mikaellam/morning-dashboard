@@ -207,7 +207,7 @@ function WeatherCard() {
 
   const { current_weather, current, hourly, daily } = data;
   const { temperature, windspeed, weathercode } = current_weather;
-  const feelsLike = current.apparent_temperature;
+  const feelsLike = current?.apparent_temperature ?? null;
   const maxT = daily.temperature_2m_max[0];
   const minT = daily.temperature_2m_min[0];
   const { fi: condition, emoji } = WMO[weathercode] || { fi: "Vaihtelevaa", emoji: "🌡️" };
@@ -239,7 +239,9 @@ function WeatherCard() {
         <div style={{ textAlign: "right", display: "flex", flexDirection: "column", gap: 5 }}>
           <div>
             <span style={{ fontSize: 10, color: "#5a6a5a" }}>Tuntuu </span>
-            <span style={{ fontSize: 13, color: "#c4c4c4" }}>{sign(feelsLike)}{Math.round(feelsLike)}°</span>
+            <span style={{ fontSize: 13, color: "#c4c4c4" }}>
+              {feelsLike != null ? `${sign(feelsLike)}${Math.round(feelsLike)}°` : "—"}
+            </span>
           </div>
           <div>
             <span style={{ fontSize: 10, color: "#5a6a5a" }}>Tuuli </span>
