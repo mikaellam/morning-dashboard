@@ -294,22 +294,38 @@ function useElectricity() {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const raw = await res.json();
 
+        console.log("[electricity] sample entry:", raw[0]);
+
         const todayFi    = new Date().toLocaleDateString("sv-SE", { timeZone: "Europe/Helsinki" });
         const tomorrowFi = (() => { const d = new Date(); d.setDate(d.getDate() + 1); return d.toLocaleDateString("sv-SE", { timeZone: "Europe/Helsinki" }); })();
 
-        const prices24 = new Array(24).fill(null);
-        const tomorrowItems = [];
+        console.log("[electricity] today:", todayFi, "tomorrow:", tomorrowFi);
+
+        // API returns 15-min intervals; bucket per hour then average.
+        // PriceWithTax is in EUR/kWh — multiply by 100 to get snt/kWh.
+        const buckets  = Array.from({ length: 24 }, () => []);
+        const tmrItems = [];
 
         raw.forEach(item => {
           const date = item.DateTime.slice(0, 10);
           const hour = parseInt(item.DateTime.slice(11, 13), 10);
-          const snt  = item.PriceWithTax / 10;
-          if (date === todayFi)    prices24[hour] = snt;
-          if (date === tomorrowFi) tomorrowItems.push(snt);
+          const snt  = item.PriceWithTax * 100;
+          if (date === todayFi)    buckets[hour].push(snt);
+          if (date === tomorrowFi) tmrItems.push(snt);
         });
 
-        const tomorrowAvg = tomorrowItems.length > 0
-          ? tomorrowItems.reduce((a, b) => a + b, 0) / tomorrowItems.length
+        const prices24 = buckets.map(b =>
+          b.length > 0 ? b.reduce((a, c) => a + c, 0) / b.length : null
+        );
+
+        console.log("[electricity] prices24:", prices24);
+
+        if (prices24.every(p => p === null)) {
+          throw new Error(`Päivän hinnat puuttuvat (haettiin: ${todayFi})`);
+        }
+
+        const tomorrowAvg = tmrItems.length > 0
+          ? tmrItems.reduce((a, b) => a + b, 0) / tmrItems.length
           : null;
 
         setState({ loading: false, error: null, today: prices24, tomorrowAvg });
