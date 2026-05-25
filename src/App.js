@@ -403,6 +403,343 @@ function ElectricityCard() {
   );
 }
 
+// ── Time Tracker ─────────────────────────────────────────────────────────────
+
+const CATEGORIES = ["Työ", "Opiskelu", "Omat projektit", "Henkilökohtainen"];
+const CAT_COLORS = {
+  "Työ":              "#9ad4f5",
+  "Opiskelu":         "#6ee7b7",
+  "Omat projektit":   "#fbbf24",
+  "Henkilökohtainen": "#c4b5fd",
+};
+const TT_KEY = "timeTracker";
+
+const fiStr = (d = new Date()) =>
+  d.toLocaleDateString("sv-SE", { timeZone: "Europe/Helsinki" });
+
+const fmtMs = (ms, withSec = false) => {
+  const ts = Math.max(0, Math.floor(ms / 1000));
+  const h  = Math.floor(ts / 3600);
+  const m  = Math.floor((ts % 3600) / 60);
+  const s  = ts % 60;
+  if (withSec) {
+    if (h > 0) return `${h}:${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}`;
+    return `${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}`;
+  }
+  if (h > 0) return `${h}h ${String(m).padStart(2,"0")}m`;
+  if (m > 0) return `${m}m`;
+  if (ts > 0) return `<1m`;
+  return "—";
+};
+
+const emptyAccum = () => Object.fromEntries(CATEGORIES.map(c => [c, 0]));
+
+const initTT = () => ({
+  history: [],
+  today: { date: fiStr(), accumulated: emptyAccum(), active: null },
+});
+
+const loadTT = () => {
+  try {
+    const raw = localStorage.getItem(TT_KEY);
+    if (!raw) return initTT();
+    const s = JSON.parse(raw);
+    CATEGORIES.forEach(c => { if (s.today.accumulated[c] == null) s.today.accumulated[c] = 0; });
+    const today = fiStr();
+    if (s.today.date !== today) {
+      if (s.today.active) {
+        const e = Date.now() - s.today.active.startedAt;
+        s.today.accumulated[s.today.active.category] = (s.today.accumulated[s.today.active.category] || 0) + e;
+        s.today.active = null;
+      }
+      s.history = [{ date: s.today.date, totals: { ...s.today.accumulated } }, ...s.history].slice(0, 30);
+      s.today = { date: today, accumulated: emptyAccum(), active: null };
+    }
+    return s;
+  } catch { return initTT(); }
+};
+
+function TimeTrackerWidget() {
+  const [store, setStore]           = useState(loadTT);
+  const [view, setView]             = useState("today");
+  const [, setTick]                 = useState(0);
+  const [monthOffset, setMonthOffset] = useState(0);
+  const [summary, setSummary]       = useState(null);
+
+  useEffect(() => { localStorage.setItem(TT_KEY, JSON.stringify(store)); }, [store]);
+
+  const isRunning = !!store.today.active;
+  useEffect(() => {
+    if (!isRunning) return;
+    const t = setInterval(() => setTick(n => n + 1), 1000);
+    return () => clearInterval(t);
+  }, [isRunning]);
+
+  const liveMs = (cat) => {
+    const acc = store.today.accumulated[cat] || 0;
+    return store.today.active?.category === cat ? acc + Date.now() - store.today.active.startedAt : acc;
+  };
+
+  const start = (cat) => setStore(prev => {
+    const s = JSON.parse(JSON.stringify(prev));
+    if (s.today.active) {
+      const e = Date.now() - s.today.active.startedAt;
+      s.today.accumulated[s.today.active.category] = (s.today.accumulated[s.today.active.category] || 0) + e;
+    }
+    s.today.active = { category: cat, startedAt: Date.now() };
+    return s;
+  });
+
+  const pause = () => setStore(prev => {
+    if (!prev.today.active) return prev;
+    const s = JSON.parse(JSON.stringify(prev));
+    const e = Date.now() - s.today.active.startedAt;
+    s.today.accumulated[s.today.active.category] = (s.today.accumulated[s.today.active.category] || 0) + e;
+    s.today.active = null;
+    return s;
+  });
+
+  const stopCat = (cat) => setStore(prev => {
+    const s = JSON.parse(JSON.stringify(prev));
+    if (s.today.active?.category === cat) {
+      const e = Date.now() - s.today.active.startedAt;
+      s.today.accumulated[cat] = (s.today.accumulated[cat] || 0) + e;
+      s.today.active = null;
+    }
+    s.today.accumulated[cat] = 0;
+    return s;
+  });
+
+  const endDay = () => {
+    const s = JSON.parse(JSON.stringify(store));
+    if (s.today.active) {
+      const e = Date.now() - s.today.active.startedAt;
+      s.today.accumulated[s.today.active.category] = (s.today.accumulated[s.today.active.category] || 0) + e;
+      s.today.active = null;
+    }
+    const snap = { date: s.today.date, totals: { ...s.today.accumulated } };
+    s.history = [snap, ...s.history].slice(0, 30);
+    s.today   = { date: fiStr(), accumulated: emptyAccum(), active: null };
+    setStore(s);
+    setSummary(snap);
+  };
+
+  // ── Today ────────────────────────────────────────────────────────────────
+  const renderToday = () => {
+    if (summary) {
+      const grand = Object.values(summary.totals).reduce((a, b) => a + b, 0);
+      const maxV  = Math.max(...Object.values(summary.totals), 1);
+      return (
+        <div>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"baseline", marginBottom:12 }}>
+            <span style={{ fontSize:11, color:"#9a9a9a" }}>Päivä päättyi · {summary.date}</span>
+            <span style={{ fontSize:12, color:"#6ee7b7" }}>{fmtMs(grand)}</span>
+          </div>
+          {CATEGORIES.map(cat => {
+            const ms = summary.totals[cat] || 0;
+            return (
+              <div key={cat} style={{ marginBottom:8 }}>
+                <div style={{ display:"flex", justifyContent:"space-between", marginBottom:3 }}>
+                  <span style={{ fontSize:10, color:CAT_COLORS[cat] }}>{cat}</span>
+                  <span style={{ fontSize:10, color:"#9a9a9a" }}>{fmtMs(ms)}</span>
+                </div>
+                <div style={{ height:4, background:"rgba(255,255,255,0.06)", borderRadius:2 }}>
+                  <div style={{ width:`${(ms/maxV)*100}%`, height:"100%", background:CAT_COLORS[cat], borderRadius:2 }} />
+                </div>
+              </div>
+            );
+          })}
+          <button className="btn-ghost" style={{ marginTop:10, width:"100%", fontSize:10 }} onClick={() => setSummary(null)}>
+            Jatka seurantaa
+          </button>
+        </div>
+      );
+    }
+
+    const totalToday = CATEGORIES.reduce((s, c) => s + liveMs(c), 0);
+
+    return (
+      <div>
+        {CATEGORIES.map(cat => {
+          const ms     = liveMs(cat);
+          const active = store.today.active?.category === cat;
+          return (
+            <div key={cat} style={{ display:"flex", alignItems:"center", gap:8, padding:"6px 0", borderBottom:"1px solid rgba(255,255,255,0.05)" }}>
+              <div style={{ width:3, height:28, background:CAT_COLORS[cat], borderRadius:2, flexShrink:0, opacity:active?1:0.3 }} />
+              <div style={{ flex:1, minWidth:0 }}>
+                <div style={{ fontSize:10, color:active?CAT_COLORS[cat]:"#6a7a6a", letterSpacing:"0.03em" }}>{cat}</div>
+                <div style={{ fontSize:13, color:active?"#f0f0f0":(ms>0?"#c4c4c4":"#3a4a3a"), fontVariantNumeric:"tabular-nums" }}>
+                  {fmtMs(ms, active)}
+                </div>
+              </div>
+              <div style={{ display:"flex", gap:4, flexShrink:0 }}>
+                {active ? (
+                  <button className="btn-ghost" onClick={pause} style={{ fontSize:11, padding:"2px 8px" }}>⏸</button>
+                ) : (
+                  <button className="btn-ghost" onClick={() => start(cat)}
+                    style={{ fontSize:11, padding:"2px 8px", color:CAT_COLORS[cat], borderColor:`${CAT_COLORS[cat]}40` }}>▶</button>
+                )}
+                {ms > 0 && !active && (
+                  <button className="btn-ghost" onClick={() => stopCat(cat)} style={{ fontSize:9, padding:"2px 5px" }}>✕</button>
+                )}
+              </div>
+            </div>
+          );
+        })}
+        <div style={{ marginTop:10, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+          <span style={{ fontSize:10, color:"#5a6a5a" }}>
+            {totalToday > 0 ? `Yhteensä ${fmtMs(totalToday)}` : "Ei kirjauksia tänään"}
+          </span>
+          {totalToday > 0 && (
+            <button className="btn-ghost" onClick={endDay} style={{ fontSize:9, letterSpacing:"0.08em", padding:"3px 10px" }}>
+              Lopeta päivä
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  // ── Week ─────────────────────────────────────────────────────────────────
+  const renderWeek = () => {
+    const today = fiStr();
+    const days  = Array.from({ length:7 }, (_, i) => {
+      const d       = new Date(); d.setDate(d.getDate() - (6 - i));
+      const dateStr = fiStr(d);
+      const label   = d.toLocaleDateString("fi-FI", { weekday:"short", timeZone:"Europe/Helsinki" }).slice(0,2).toUpperCase();
+      const isToday = dateStr === today;
+      const totals  = isToday
+        ? Object.fromEntries(CATEGORIES.map(c => [c, liveMs(c)]))
+        : (store.history.find(h => h.date === dateStr)?.totals ?? emptyAccum());
+      const total   = Object.values(totals).reduce((a, b) => a + b, 0);
+      return { dateStr, label, isToday, totals, total };
+    });
+
+    const maxTotal = Math.max(...days.map(d => d.total), 1);
+    const BAR_H    = 56;
+
+    return (
+      <div>
+        <div style={{ display:"flex", alignItems:"flex-end", gap:3, height:BAR_H+18 }}>
+          {days.map(({ dateStr, label, isToday, totals, total }) => {
+            const filledH = (total / maxTotal) * BAR_H;
+            return (
+              <div key={dateStr} style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center" }}>
+                <div style={{ width:"100%", height:BAR_H, position:"relative" }} title={`${dateStr} — ${fmtMs(total)}`}>
+                  <div style={{ position:"absolute", inset:0, background:"rgba(255,255,255,0.03)", borderRadius:1 }} />
+                  <div style={{ position:"absolute", bottom:0, left:0, right:0, height:filledH, overflow:"hidden", borderRadius:1, display:"flex", flexDirection:"column-reverse" }}>
+                    {CATEGORIES.map(cat => {
+                      const ms = totals[cat] || 0;
+                      if (!ms) return null;
+                      return <div key={cat} style={{ height:(ms/total)*filledH, background:CAT_COLORS[cat], flexShrink:0, opacity:isToday?1:0.72 }} />;
+                    })}
+                  </div>
+                </div>
+                <div style={{ fontSize:8, color:isToday?"#6ee7b7":"#4a5a4a", marginTop:4 }}>{label}</div>
+              </div>
+            );
+          })}
+        </div>
+        <div style={{ display:"flex", flexWrap:"wrap", gap:"3px 10px", marginTop:10, paddingTop:8, borderTop:"1px solid rgba(255,255,255,0.05)" }}>
+          {CATEGORIES.map(cat => (
+            <div key={cat} style={{ display:"flex", alignItems:"center", gap:4 }}>
+              <div style={{ width:7, height:7, borderRadius:1, background:CAT_COLORS[cat] }} />
+              <span style={{ fontSize:9, color:"#5a6a5a" }}>{cat}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
+
+  // ── Month ────────────────────────────────────────────────────────────────
+  const renderMonth = () => {
+    const target = new Date(new Date().getFullYear(), new Date().getMonth() + monthOffset, 1);
+    const mStr   = `${target.getFullYear()}-${String(target.getMonth()+1).padStart(2,"0")}`;
+    const mLabel = target.toLocaleDateString("fi-FI", { year:"numeric", month:"long" });
+    const today  = fiStr();
+
+    const days = [
+      ...store.history.filter(d => d.date.startsWith(mStr)),
+      ...(today.startsWith(mStr) ? [{ date:today, totals:Object.fromEntries(CATEGORIES.map(c=>[c,liveMs(c)])) }] : []),
+    ].filter((d,i,a) => a.findIndex(x => x.date===d.date)===i);
+
+    const totals = Object.fromEntries(CATEGORIES.map(c => [c, days.reduce((s,d)=>s+(d.totals[c]||0),0)]));
+    const grand  = Object.values(totals).reduce((a,b)=>a+b,0);
+    const maxCat = Math.max(...Object.values(totals), 1);
+    const avgDay = days.length > 0 ? grand / days.length : 0;
+    let bestDay  = null, bestMs = 0;
+    days.forEach(d => { const t=Object.values(d.totals).reduce((a,b)=>a+b,0); if(t>bestMs){bestMs=t;bestDay=d.date;} });
+
+    return (
+      <div>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
+          <button className="btn-ghost" onClick={() => setMonthOffset(o=>o-1)} disabled={monthOffset<=-11}
+            style={{ fontSize:10, padding:"2px 7px" }}>←</button>
+          <span style={{ fontSize:10, color:"#c4c4c4", textTransform:"capitalize" }}>{mLabel}</span>
+          <button className="btn-ghost" onClick={() => setMonthOffset(o=>o+1)} disabled={monthOffset>=0}
+            style={{ fontSize:10, padding:"2px 7px" }}>→</button>
+        </div>
+
+        {days.length===0 ? (
+          <div style={{ fontSize:11, color:"#5a6a5a", textAlign:"center", padding:"16px 0" }}>Ei kirjauksia</div>
+        ) : (
+          <>
+            {CATEGORIES.map(cat => {
+              const ms  = totals[cat];
+              const pct = grand>0 ? Math.round(ms/grand*100) : 0;
+              return (
+                <div key={cat} style={{ marginBottom:8 }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", marginBottom:3 }}>
+                    <span style={{ fontSize:10, color:CAT_COLORS[cat] }}>{cat}</span>
+                    <span style={{ fontSize:10, color:"#7a8a7a" }}>{fmtMs(ms)} · {pct}%</span>
+                  </div>
+                  <div style={{ height:5, background:"rgba(255,255,255,0.06)", borderRadius:2 }}>
+                    <div style={{ width:`${(ms/maxCat)*100}%`, height:"100%", background:CAT_COLORS[cat], borderRadius:2, opacity:0.8 }} />
+                  </div>
+                </div>
+              );
+            })}
+            <div style={{ marginTop:10, paddingTop:8, borderTop:"1px solid rgba(255,255,255,0.06)", display:"grid", gridTemplateColumns:"1fr 1fr", rowGap:5, fontSize:10 }}>
+              <span style={{ color:"#5a6a5a" }}>Yhteensä</span>
+              <span style={{ color:"#e8e8e8", textAlign:"right" }}>{fmtMs(grand)}</span>
+              <span style={{ color:"#5a6a5a" }}>Kirjauspäiviä</span>
+              <span style={{ color:"#e8e8e8", textAlign:"right" }}>{days.length} pv</span>
+              <span style={{ color:"#5a6a5a" }}>Ka. / päivä</span>
+              <span style={{ color:"#e8e8e8", textAlign:"right" }}>{fmtMs(avgDay)}</span>
+              {bestDay && <>
+                <span style={{ color:"#5a6a5a" }}>Tuottavin päivä</span>
+                <span style={{ color:"#6ee7b7", textAlign:"right" }}>{bestDay.slice(5)} · {fmtMs(bestMs)}</span>
+              </>}
+            </div>
+          </>
+        )}
+      </div>
+    );
+  };
+
+  // ── Render ────────────────────────────────────────────────────────────────
+  return (
+    <div className="card">
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
+        <div className="label" style={{ marginBottom:0 }}>Ajanseuranta</div>
+        <div style={{ display:"flex", gap:3 }}>
+          {[["today","Tänään"],["week","7 pv"],["month","Kuukausi"]].map(([v,l]) => (
+            <button key={v} className="btn-ghost" onClick={() => setView(v)} style={{
+              fontSize:9, padding:"2px 7px",
+              color: view===v?"#6ee7b7":"#5a6a5a",
+              borderColor: view===v?"rgba(110,231,183,0.25)":"rgba(255,255,255,0.07)",
+            }}>{l}</button>
+          ))}
+        </div>
+      </div>
+      {view==="today" && renderToday()}
+      {view==="week"  && renderWeek()}
+      {view==="month" && renderMonth()}
+    </div>
+  );
+}
+
 export default function App() {
   return (
     <PasswordGate>
@@ -623,6 +960,9 @@ function MorningDashboard({ onLogout }) {
           </div>
         </div>
 
+        {/* TIME TRACKER */}
+        <TimeTrackerWidget />
+
       </div>
 
       {/* WEEK PLAN */}
@@ -678,7 +1018,7 @@ function MorningDashboard({ onLogout }) {
 
       {/* Footer */}
       <div style={{ padding: "0 32px 20px", display: "flex", justifyContent: "space-between", fontSize: 10, color: "#2a3a2a", letterSpacing: "0.1em" }}>
-        <span>MORNING DASHBOARD v0.2</span>
+        <span>MORNING DASHBOARD v0.3</span>
         <span>SÄÄ: OPEN-METEO · SÄHKÖ: SPOT-HINTA.FI</span>
       </div>
     </div>
