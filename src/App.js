@@ -117,11 +117,6 @@ const FOREST_REMINDERS = {
 
 const INITIAL_WEEK = DAYS.reduce((acc, d) => ({ ...acc, [d]: [] }), {});
 
-const MOCK_LEVI_BOOKINGS = [
-  { dates: "31.5–4.6", guests: "Virtanen (2 hlö)", status: "confirmed" },
-  { dates: "14.6–21.6", guests: "Korhonen (4 hlö)", status: "confirmed" },
-  { dates: "28.6–5.7", guests: "—", status: "free" },
-];
 
 const MOCK_MAINTENANCE = [
   { id: 1, task: "Tarkista lämminvesivaraaja", done: false },
@@ -771,12 +766,11 @@ const SOURCE_BADGE = {
   apple:   { bg: "rgba(209,213,219,0.06)", color: "#9ca3af",  label: "apple" },
 };
 
-function TodayWidget({ weatherState, electricityState, weekPlan, setWeekPlan, recurringEvents, setRecurringEvents, todayName, now, forestReminders, setForestReminders }) {
-  const [energyMap, setEnergyMap]           = useState(() => {
+function TodayWidget({ weatherState, electricityState, weekPlan, setWeekPlan, recurringEvents, setRecurringEvents, todayName, now }) {
+  const [energyMap, setEnergyMap]   = useState(() => {
     try { return JSON.parse(localStorage.getItem(EL_KEY)) || {}; } catch { return {}; }
   });
-  const [forestEditMode, setForestEditMode] = useState(false);
-  const [addingEvent, setAddingEvent]       = useState(false);
+  const [addingEvent, setAddingEvent] = useState(false);
   const [newTime, setNewTime]               = useState("");
   const [newTitle, setNewTitle]             = useState("");
   const [newRecurring, setNewRecurring]     = useState(false);
@@ -792,7 +786,7 @@ function TodayWidget({ weatherState, electricityState, weekPlan, setWeekPlan, re
   const month       = now.getMonth() + 1;
   const energyLevel = energyMap[todayStr] || null;
   const setEnergy   = (v) => setEnergyMap(m => ({ ...m, [todayStr]: m[todayStr] === v ? null : v }));
-  const forestReminder = forestReminders[month] || FOREST_REMINDERS[month];
+  const forestReminder = FOREST_REMINDERS[month];
 
   const events  = getEventsForToday(weekPlan, recurringEvents, todayName);
   const nowMins = now.getHours() * 60 + now.getMinutes();
@@ -1023,24 +1017,8 @@ function TodayWidget({ weatherState, electricityState, weekPlan, setWeekPlan, re
 
           {/* Forest reminder */}
           <div>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-              <div className="label" style={{ marginBottom: 0 }}>🌲 Metsä</div>
-              <button className="btn-ghost" onClick={() => setForestEditMode(m => !m)} style={{ fontSize: 9 }}>
-                {forestEditMode ? "✓ Valmis" : "✎"}
-              </button>
-            </div>
-            {forestEditMode ? (
-              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                {Array.from({ length: 12 }, (_, i) => i + 1).map(m => (
-                  <div key={m} style={{ display: "flex", gap: 5, alignItems: "center" }}>
-                    <span style={{ fontSize: 9, color: "#5a6a5a", width: 16, flexShrink: 0, textAlign: "right" }}>{m}.</span>
-                    <input type="text" value={forestReminders[m] || ""} onChange={e => setForestReminders(r => ({ ...r, [m]: e.target.value }))} style={{ flex: 1, fontSize: 10 }} />
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div style={{ fontSize: 11, color: "#a8c4a8", lineHeight: 1.5 }}>{forestReminder}</div>
-            )}
+            <div className="label" style={{ marginBottom: 4 }}>🌲 Metsä</div>
+            <div style={{ fontSize: 11, color: "#a8c4a8", lineHeight: 1.5 }}>{forestReminder}</div>
           </div>
 
         </div>
@@ -1049,19 +1027,6 @@ function TodayWidget({ weatherState, electricityState, weekPlan, setWeekPlan, re
   );
 }
 
-// ── Forest Reminders hook ─────────────────────────────────────────────────────
-
-const FR_KEY = "forestReminders";
-function useForestReminders() {
-  const [reminders, setReminders] = useState(() => {
-    try {
-      const raw = localStorage.getItem(FR_KEY);
-      return raw ? { ...FOREST_REMINDERS, ...JSON.parse(raw) } : { ...FOREST_REMINDERS };
-    } catch { return { ...FOREST_REMINDERS }; }
-  });
-  useEffect(() => { localStorage.setItem(FR_KEY, JSON.stringify(reminders)); }, [reminders]);
-  return [reminders, setReminders];
-}
 
 // ── Studies & Projects card ───────────────────────────────────────────────────
 
@@ -1477,6 +1442,242 @@ function WeeklyGoalsWidget() {
   );
 }
 
+// ── Levi Billing Widget ───────────────────────────────────────────────────────
+
+const LEVI_KEY      = "leviData";
+const BILLING_MONTHS = [11, 12, 1, 2, 3, 4];
+const LEVI_DEFAULTS  = { tenants: [], billingLog: {}, seasonOverride: false };
+
+function LeviWidget({ now }) {
+  const [data, setData] = useState(() => {
+    try { return { ...LEVI_DEFAULTS, ...JSON.parse(localStorage.getItem(LEVI_KEY)) }; } catch { return { ...LEVI_DEFAULTS }; }
+  });
+  const [maintenance, setMaintenance] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("maintenance")) || MOCK_MAINTENANCE; } catch { return MOCK_MAINTENANCE; }
+  });
+  const [editMode, setEditMode]         = useState(false);
+  const [showHistory, setShowHistory]   = useState(false);
+  const [addingTenant, setAddingTenant] = useState(false);
+  const [newTenant, setNewTenant]       = useState({ name: "", rent: "", billingDay: "1", notes: "" });
+  const [newTask, setNewTask]           = useState("");
+
+  useEffect(() => { localStorage.setItem(LEVI_KEY, JSON.stringify(data)); }, [data]);
+  useEffect(() => { localStorage.setItem("maintenance", JSON.stringify(maintenance)); }, [maintenance]);
+
+  const month    = now.getMonth() + 1;
+  const year     = now.getFullYear();
+  const mKey     = `${year}-${String(month).padStart(2, "0")}`;
+  const todayDay = now.getDate();
+
+  const isSeasonMonth  = BILLING_MONTHS.includes(month);
+  const isActiveSeason = isSeasonMonth || data.seasonOverride;
+
+  const nextSeasonStr = (() => {
+    if (isSeasonMonth) return null;
+    const ny = month < 11 ? year : year + 1;
+    return `${ny}/11`;
+  })();
+
+  const getBillingStatus = (t) => {
+    if (data.billingLog[t.id]?.[mKey]) return { label: "Laskutettu",   color: "#6ee7b7" };
+    const diff = t.billingDay - todayDay;
+    if (diff < 0)  return { label: "Myöhässä",     color: "#f87171" };
+    if (diff <= 3) return { label: "Laskuta pian", color: "#fbbf24" };
+    return             { label: "Tulossa",      color: "#4a5a4a" };
+  };
+
+  const markBilled = (id) => {
+    const d = now.toLocaleDateString("sv-SE", { timeZone: "Europe/Helsinki" });
+    setData(prev => ({
+      ...prev,
+      billingLog: { ...prev.billingLog, [id]: { ...(prev.billingLog[id] || {}), [mKey]: d } },
+    }));
+  };
+
+  const addTenant = () => {
+    if (!newTenant.name.trim() || !newTenant.rent) return;
+    const t = {
+      id: Date.now(),
+      name:       newTenant.name.trim(),
+      rent:       parseFloat(newTenant.rent),
+      billingDay: parseInt(newTenant.billingDay, 10) || 1,
+      notes:      newTenant.notes.trim(),
+    };
+    setData(d => ({ ...d, tenants: [...d.tenants, t] }));
+    setNewTenant({ name: "", rent: "", billingDay: "1", notes: "" });
+    setAddingTenant(false);
+  };
+  const removeTenant = (id) => setData(d => ({ ...d, tenants: d.tenants.filter(t => t.id !== id) }));
+
+  const toggleMaintenance     = (id) => setMaintenance(m => m.map(i => i.id === id ? { ...i, done: !i.done } : i));
+  const addMaintenanceTask    = ()   => {
+    if (!newTask.trim()) return;
+    setMaintenance(m => [...m, { id: Date.now(), task: newTask.trim(), done: false }]);
+    setNewTask("");
+  };
+  const removeMaintenance = (id) => setMaintenance(m => m.filter(i => i.id !== id));
+
+  const seasonTotal = data.tenants.reduce((sum, t) =>
+    sum + Object.values(data.billingLog[t.id] || {}).filter(Boolean).length * t.rent, 0);
+
+  const last6 = Array.from({ length: 6 }, (_, i) => {
+    const d = new Date(year, month - 1 - (5 - i), 1);
+    return {
+      key:   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`,
+      label: String(d.getMonth() + 1).padStart(2, "0"),
+    };
+  });
+
+  const inStyle = { background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 2, color: "#e8e8e8", padding: "5px 8px", fontFamily: "inherit", fontSize: 11, outline: "none" };
+
+  return (
+    <div className="card">
+      {/* Header */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+        <div className="label" style={{ marginBottom: 0 }}>Levi — Vuokraus</div>
+        <div style={{ display: "flex", gap: 4 }}>
+          {!isSeasonMonth && (
+            <button className="btn-ghost" onClick={() => setData(d => ({ ...d, seasonOverride: !d.seasonOverride }))}
+              style={{ fontSize: 9, color: isActiveSeason ? "#9a9a9a" : "#fbbf24", borderColor: isActiveSeason ? "rgba(255,255,255,0.1)" : "rgba(251,191,36,0.3)" }}>
+              {isActiveSeason ? "Kesätauko" : "Aktivoi kausi"}
+            </button>
+          )}
+          <button className="btn-ghost" onClick={() => { setShowHistory(h => !h); }} style={{ fontSize: 9 }}>
+            {showHistory ? "← Takaisin" : "Historia"}
+          </button>
+          <button className="btn-ghost" onClick={() => { setEditMode(e => !e); setAddingTenant(false); }} style={{ fontSize: 9 }}>
+            {editMode ? "✓ Valmis" : "✎ Muokkaa"}
+          </button>
+        </div>
+      </div>
+
+      {/* Off-season state */}
+      {!isActiveSeason ? (
+        <div style={{ opacity: 0.65 }}>
+          <div style={{ fontSize: 12, color: "#6a7a6a" }}>Kesätauko — ei laskutusta</div>
+          <div style={{ fontSize: 11, color: "#4a5a4a", marginTop: 4 }}>Kausi alkaa {nextSeasonStr}</div>
+          {data.tenants.length > 0 && (
+            <div style={{ fontSize: 10, color: "#3a4a3a", marginTop: 6 }}>{data.tenants.length} vuokralaista rekisterissä</div>
+          )}
+        </div>
+
+      ) : showHistory ? (
+        /* Billing history */
+        <div>
+          <div className="label" style={{ marginBottom: 8 }}>Laskutushistoria (6 kk)</div>
+          {data.tenants.length === 0 && <div style={{ fontSize: 11, color: "#5a6a5a" }}>Ei vuokralaisia</div>}
+          {data.tenants.map(t => (
+            <div key={t.id} style={{ marginBottom: 10, paddingBottom: 8, borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+              <div style={{ fontSize: 11, color: "#c4c4c4", marginBottom: 4 }}>{t.name}</div>
+              <div style={{ display: "flex", gap: 4 }}>
+                {last6.map(({ key, label }) => {
+                  const billed = data.billingLog[t.id]?.[key];
+                  return (
+                    <div key={key} style={{ textAlign: "center", flex: 1 }}>
+                      <div style={{ fontSize: 8, color: "#4a5a4a" }}>{label}</div>
+                      <div style={{ fontSize: 9, marginTop: 2, color: billed ? "#6ee7b7" : "#3a4a3a" }}>
+                        {billed ? billed.slice(8) : "—"}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+
+      ) : (
+        /* Active season — tenant billing */
+        <div>
+          {data.tenants.length === 0 && !editMode && (
+            <div style={{ fontSize: 11, color: "#5a6a5a", marginBottom: 8 }}>Lisää vuokralaisia muokkaustilassa</div>
+          )}
+          {data.tenants.map(t => {
+            const bs     = getBillingStatus(t);
+            const billed = !!data.billingLog[t.id]?.[mKey];
+            return (
+              <div key={t.id} style={{ padding: "7px 0", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                      <span style={{ fontSize: 12, color: "#d4d4d4" }}>{t.name}</span>
+                      <span style={{ fontSize: 9, color: bs.color, border: `1px solid ${bs.color}40`, padding: "1px 5px", borderRadius: 1 }}>{bs.label}</span>
+                    </div>
+                    <div style={{ fontSize: 10, color: "#5a6a5a", marginTop: 2 }}>
+                      {t.rent.toLocaleString("fi-FI")} €/kk · pv {t.billingDay}
+                      {t.notes && <span style={{ marginLeft: 5, color: "#4a5a4a", fontStyle: "italic" }}>{t.notes}</span>}
+                    </div>
+                  </div>
+                  {editMode ? (
+                    <button className="btn-ghost" onClick={() => removeTenant(t.id)} style={{ fontSize: 9, padding: "1px 5px", flexShrink: 0 }}>✕</button>
+                  ) : !billed ? (
+                    <button className="btn-ghost" onClick={() => markBilled(t.id)}
+                      style={{ fontSize: 9, padding: "2px 7px", color: "#6ee7b7", borderColor: "rgba(110,231,183,0.3)", flexShrink: 0, whiteSpace: "nowrap" }}>
+                      ✓ Laskutettu
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            );
+          })}
+
+          {editMode && !addingTenant && (
+            <button className="btn-ghost" onClick={() => setAddingTenant(true)} style={{ fontSize: 9, width: "100%", marginTop: 6 }}>
+              + Lisää vuokralainen
+            </button>
+          )}
+          {editMode && addingTenant && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 5, marginTop: 6, padding: "8px", background: "rgba(110,231,183,0.04)", borderRadius: 2, border: "1px solid rgba(110,231,183,0.1)" }}>
+              <input type="text" placeholder="Nimi *" value={newTenant.name} onChange={e => setNewTenant(p => ({ ...p, name: e.target.value }))} style={{ ...inStyle, width: "100%" }} />
+              <div style={{ display: "flex", gap: 5 }}>
+                <input type="number" placeholder="€/kk" value={newTenant.rent} onChange={e => setNewTenant(p => ({ ...p, rent: e.target.value }))} style={{ ...inStyle, flex: 1 }} min="0" />
+                <input type="number" placeholder="Pv" value={newTenant.billingDay} onChange={e => setNewTenant(p => ({ ...p, billingDay: e.target.value }))} style={{ ...inStyle, width: 56 }} min="1" max="28" />
+              </div>
+              <input type="text" placeholder="Muistiinpanot (valinnainen)" value={newTenant.notes} onChange={e => setNewTenant(p => ({ ...p, notes: e.target.value }))} style={{ ...inStyle, width: "100%" }} />
+              <div style={{ display: "flex", gap: 4 }}>
+                <button className="btn" style={{ flex: 1, fontSize: 10 }} onClick={addTenant}>+ Lisää</button>
+                <button className="btn-ghost" onClick={() => setAddingTenant(false)}>✕</button>
+              </div>
+            </div>
+          )}
+
+          {data.tenants.length > 0 && (
+            <div style={{ marginTop: 10, paddingTop: 8, borderTop: "1px solid rgba(255,255,255,0.06)", display: "flex", justifyContent: "space-between", fontSize: 10 }}>
+              <span style={{ color: "#5a6a5a" }}>Kausi laskutettu yhteensä</span>
+              <span style={{ color: "#6ee7b7" }}>{seasonTotal.toLocaleString("fi-FI")} €</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Huoltolista ─────────────────────────────── */}
+      <div style={{ marginTop: 14, paddingTop: 12, borderTop: "1px solid rgba(255,255,255,0.06)" }}>
+        <div className="label">Huoltolista</div>
+        {maintenance.map(m => (
+          <div key={m.id} className="check-row" onClick={() => !editMode && toggleMaintenance(m.id)}
+            style={{ color: m.done ? "#3a4a3a" : "#c4c4c4", textDecoration: m.done ? "line-through" : "none" }}>
+            <div className="check-box" style={{ borderColor: m.done ? "#2a3a2a" : "#4a6a4a", background: m.done ? "#2a3a2a" : "transparent" }}>
+              {m.done && <span style={{ fontSize: 9, color: "#6ee7b7" }}>✓</span>}
+            </div>
+            <span style={{ flex: 1 }}>{m.task}</span>
+            {editMode && (
+              <button className="btn-ghost" onClick={e => { e.stopPropagation(); removeMaintenance(m.id); }} style={{ fontSize: 9, padding: "1px 5px" }}>✕</button>
+            )}
+          </div>
+        ))}
+        {editMode && (
+          <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+            <input type="text" value={newTask} onChange={e => setNewTask(e.target.value)}
+              placeholder="Uusi tehtävä..." style={{ flex: 1 }}
+              onKeyDown={e => { if (e.key === "Enter") addMaintenanceTask(); }} />
+            <button className="btn" onClick={addMaintenanceTask}>+</button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   return (
     <PasswordGate>
@@ -1495,16 +1696,11 @@ function MorningDashboard({ onLogout }) {
   const [recurringEvents, setRecurringEvents] = useState(() => {
     try { return JSON.parse(localStorage.getItem("recurringEvents")) || INITIAL_WEEK; } catch { return INITIAL_WEEK; }
   });
-  const [maintenance, setMaintenance] = useState(() => {
-    try { return JSON.parse(localStorage.getItem("maintenance")) || MOCK_MAINTENANCE; } catch { return MOCK_MAINTENANCE; }
-  });
   const [editMode, setEditMode]               = useState(false);
   const [editDay, setEditDay]                 = useState(null);
   const [newEventTime, setNewEventTime]       = useState("");
   const [newEventTitle, setNewEventTitle]     = useState("");
   const [newEventRecurring, setNewEventRecurring] = useState(false);
-  const [newTask, setNewTask]                 = useState("");
-  const [forestReminders, setForestReminders] = useForestReminders();
 
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 30000);
@@ -1518,10 +1714,6 @@ function MorningDashboard({ onLogout }) {
   useEffect(() => {
     localStorage.setItem("recurringEvents", JSON.stringify(recurringEvents));
   }, [recurringEvents]);
-
-  useEffect(() => {
-    localStorage.setItem("maintenance", JSON.stringify(maintenance));
-  }, [maintenance]);
 
   const dayIndex  = (now.getDay() + 6) % 7;
   const todayName = DAYS[dayIndex];
@@ -1549,17 +1741,6 @@ function MorningDashboard({ onLogout }) {
     } else {
       setWeekPlan(prev => ({ ...prev, [day]: (prev[day] || []).filter((_, i) => i !== idx) }));
     }
-  };
-
-  const toggleMaintenance = (id) => {
-    setMaintenance(maintenance.map(m => m.id === id ? { ...m, done: !m.done } : m));
-  };
-
-  const addMaintenanceTask = () => {
-    if (!newTask.trim()) return;
-    const next = { id: Date.now(), task: newTask.trim(), done: false };
-    setMaintenance([...maintenance, next]);
-    setNewTask("");
   };
 
   const dateStr = now.toLocaleDateString("fi-FI", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
@@ -1625,6 +1806,34 @@ function MorningDashboard({ onLogout }) {
         </div>
       </div>
 
+      {/* Quick links */}
+      <div style={{ padding: "12px 32px 0", display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={{ fontSize: 9, letterSpacing: "0.12em", textTransform: "uppercase", color: "#3a4a3a", marginRight: 4 }}>Pikakuvakkeet</span>
+        <a href="https://mail.google.com" target="_blank" rel="noopener noreferrer"
+          title="Gmail"
+          style={{ display: "flex", alignItems: "center", gap: 5, padding: "4px 10px", background: "rgba(234,67,53,0.08)", border: "1px solid rgba(234,67,53,0.2)", borderRadius: 2, textDecoration: "none", color: "#ea4335", fontSize: 11, letterSpacing: "0.05em", transition: "background 0.2s" }}
+          onMouseOver={e => e.currentTarget.style.background = "rgba(234,67,53,0.16)"}
+          onMouseOut={e => e.currentTarget.style.background = "rgba(234,67,53,0.08)"}>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
+            <path d="M22 6c0-1.1-.9-2-2-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6z" fill="rgba(234,67,53,0.15)" stroke="#ea4335" strokeWidth="1.5"/>
+            <path d="M2 6l10 7 10-7" stroke="#ea4335" strokeWidth="1.5" strokeLinecap="round"/>
+          </svg>
+          Gmail
+        </a>
+        <a href="https://outlook.live.com" target="_blank" rel="noopener noreferrer"
+          title="Outlook"
+          style={{ display: "flex", alignItems: "center", gap: 5, padding: "4px 10px", background: "rgba(0,120,212,0.08)", border: "1px solid rgba(0,120,212,0.2)", borderRadius: 2, textDecoration: "none", color: "#60a5fa", fontSize: 11, letterSpacing: "0.05em", transition: "background 0.2s" }}
+          onMouseOver={e => e.currentTarget.style.background = "rgba(0,120,212,0.16)"}
+          onMouseOut={e => e.currentTarget.style.background = "rgba(0,120,212,0.08)"}>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
+            <rect x="2" y="4" width="20" height="16" rx="1.5" fill="rgba(0,120,212,0.12)" stroke="#60a5fa" strokeWidth="1.5"/>
+            <path d="M8 4v16" stroke="#60a5fa" strokeWidth="1" strokeOpacity="0.4"/>
+            <path d="M2 9h6M2 14h6M10 9h12M10 14h12" stroke="#60a5fa" strokeWidth="1" strokeOpacity="0.3"/>
+          </svg>
+          Outlook
+        </a>
+      </div>
+
       {/* Main grid */}
       <div style={{ padding: "24px 32px", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 16 }}>
 
@@ -1638,8 +1847,6 @@ function MorningDashboard({ onLogout }) {
           setRecurringEvents={setRecurringEvents}
           todayName={todayName}
           now={now}
-          forestReminders={forestReminders}
-          setForestReminders={setForestReminders}
         />
 
         {/* ELECTRICITY */}
@@ -1648,40 +1855,8 @@ function MorningDashboard({ onLogout }) {
         {/* WEATHER */}
         <WeatherCard {...weatherState} />
 
-        {/* LEVI BOOKINGS */}
-        <div className="card">
-          <div className="label">Levi — Varaukset</div>
-          {MOCK_LEVI_BOOKINGS.map((b, i) => (
-            <div className="booking-row" key={i}>
-              <div className="dot" style={{ background: b.status === "confirmed" ? "#6ee7b7" : "#3a4a3a" }} />
-              <div style={{ flex: 1 }}>
-                <span style={{ color: b.status === "free" ? "#5a6a5a" : "#d4d4d4" }}>{b.dates}</span>
-                {b.status === "confirmed" && <span style={{ color: "#7a8a7a", marginLeft: 8 }}>{b.guests}</span>}
-                {b.status === "free" && <span style={{ color: "#4a5a4a", marginLeft: 8, fontStyle: "italic" }}>vapaana</span>}
-              </div>
-            </div>
-          ))}
-          <div style={{ marginTop: 14, paddingTop: 12, borderTop: "1px solid rgba(255,255,255,0.06)" }}>
-            <div className="label">Huoltolista</div>
-            {maintenance.map(m => (
-              <div className="check-row" key={m.id} onClick={() => toggleMaintenance(m.id)}
-                style={{ color: m.done ? "#3a4a3a" : "#c4c4c4", textDecoration: m.done ? "line-through" : "none" }}>
-                <div className="check-box" style={{ borderColor: m.done ? "#2a3a2a" : "#4a6a4a", background: m.done ? "#2a3a2a" : "transparent" }}>
-                  {m.done && <span style={{ fontSize: 9, color: "#6ee7b7" }}>✓</span>}
-                </div>
-                {m.task}
-              </div>
-            ))}
-            {editMode && (
-              <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-                <input type="text" value={newTask} onChange={e => setNewTask(e.target.value)}
-                  placeholder="Uusi tehtävä..." style={{ flex: 1 }}
-                  onKeyDown={e => { if (e.key === "Enter") { addMaintenanceTask(); } }} />
-                <button className="btn" onClick={addMaintenanceTask}>+</button>
-              </div>
-            )}
-          </div>
-        </div>
+        {/* LEVI BILLING */}
+        <LeviWidget now={now} />
 
         {/* STUDIES & PROJECTS */}
         <StudiesProjectsCard />
