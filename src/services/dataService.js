@@ -1,6 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 
-// ── Supabase client (null when env vars are absent) ───────────────────────────
+// ── Supabase client ───────────────────────────────────────────────────────────
 
 const supabase =
   process.env.REACT_APP_SUPABASE_URL && process.env.REACT_APP_SUPABASE_ANON_KEY
@@ -10,28 +10,30 @@ const supabase =
       )
     : null;
 
-// ── Device identity ───────────────────────────────────────────────────────────
+// ── Shared user identity (single-user dashboard) ──────────────────────────────
 
 const USER_ID = 'c2bf189d-7047-499d-9db8-2947e4afc0bc';
-
-const getUserId = () => USER_ID;
 
 // Keys that must never sync to Supabase (device-specific state)
 const NO_SYNC = new Set(['dashboard_auth']);
 
-// ── Sync status + debug info ──────────────────────────────────────────────────
+// ── Debug info (read by SyncDot) ──────────────────────────────────────────────
+
+export const debugInfo = {
+  userId:           USER_ID,
+  supabaseUrl:      process.env.REACT_APP_SUPABASE_URL || '(not set)',
+  lastReadAt:       null,
+  keysLoaded:       null,
+  keysMigrated:     null,
+  lastError:        null,
+  realtimeStatus:   'off',    // 'off' | 'connecting' | 'connected' | 'error'
+  lastRemoteUpdate: null,
+};
+
+// ── Sync status ───────────────────────────────────────────────────────────────
 
 let _status = 'synced';
 const _listeners = new Set();
-
-export const debugInfo = {
-  userId:        USER_ID,
-  supabaseUrl:   process.env.REACT_APP_SUPABASE_URL || '(not set)',
-  lastReadAt:    null,   // ISO string, set after successful init()
-  keysLoaded:    null,   // number of rows fetched from Supabase
-  keysMigrated:  null,   // number of local-only keys uploaded
-  lastError:     null,   // most recent error message
-};
 
 export function getSyncStatus() { return _status; }
 
@@ -47,6 +49,12 @@ function setStatus(s) {
   _listeners.forEach(cb => cb(s));
 }
 
+// ── Echo suppression ──────────────────────────────────────────────────────────
+// After we flush a key to Supabase, record the timestamp so the real-time
+// echo of our own write can be ignored (5 s grace window).
+
+const _ownSaveTs = new Map(); // key → ms timestamp
+
 // ── Debounced write queue ─────────────────────────────────────────────────────
 
 const _timers = {};
@@ -54,14 +62,14 @@ let _inFlight = 0;
 
 async function flushOne(key, value) {
   if (!supabase) return;
-  const uid = getUserId();
   const { error } = await supabase
     .from('user_data')
     .upsert(
-      { user_id: uid, key, value, updated_at: new Date().toISOString() },
+      { user_id: USER_ID, key, value, updated_at: new Date().toISOString() },
       { onConflict: 'user_id,key' }
     );
   if (error) throw error;
+  _ownSaveTs.set(key, Date.now()); // mark as our own so realtime echo is filtered
 }
 
 function scheduleSave(key, value) {
@@ -87,7 +95,7 @@ function scheduleSave(key, value) {
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
-/** Synchronous read from localStorage (after init() this reflects Supabase data). */
+/** Synchronous read from localStorage. */
 export function load(key) {
   try {
     const raw = localStorage.getItem(key);
@@ -105,15 +113,13 @@ export function save(key, value) {
 export async function remove(key) {
   localStorage.removeItem(key);
   if (!supabase) return;
-  const uid = getUserId();
-  await supabase.from('user_data').delete().eq('user_id', uid).eq('key', key);
+  await supabase.from('user_data').delete().eq('user_id', USER_ID).eq('key', key);
 }
 
 /**
- * Initialize: fetch all rows for this device from Supabase and write them into
- * localStorage so that component useState initialisers pick up synced data.
- * Also migrates any existing localStorage keys that aren't yet in Supabase.
- * Always resolves (never throws) so the app loads even when offline.
+ * Fetch all rows for this user from Supabase and write them into localStorage,
+ * then migrate any local-only keys up to Supabase.
+ * Always resolves — never throws — so the app loads even when offline.
  */
 export async function init() {
   if (!supabase) {
@@ -124,20 +130,17 @@ export async function init() {
     return;
   }
 
-  const uid = getUserId();
   setStatus('syncing');
   debugInfo.lastError = null;
 
   try {
-    // 1. Fetch all rows for this user
     const { data, error } = await supabase
       .from('user_data')
       .select('key, value')
-      .eq('user_id', uid);
+      .eq('user_id', USER_ID);
 
     if (error) throw error;
 
-    // 2. Write Supabase data into localStorage (remote wins on conflict)
     const remoteKeys = new Set();
     for (const row of data ?? []) {
       remoteKeys.add(row.key);
@@ -147,7 +150,7 @@ export async function init() {
     debugInfo.keysLoaded = remoteKeys.size;
     debugInfo.lastReadAt = new Date().toISOString();
 
-    // 3. Migrate local-only keys to Supabase (first-run migration)
+    // Migrate local-only keys
     const toMigrate = [];
     for (const lsKey of Object.keys(localStorage)) {
       if (NO_SYNC.has(lsKey) || remoteKeys.has(lsKey)) continue;
@@ -155,7 +158,7 @@ export async function init() {
       if (!raw) continue;
       try {
         toMigrate.push({
-          user_id: uid,
+          user_id: USER_ID,
           key: lsKey,
           value: JSON.parse(raw),
           updated_at: new Date().toISOString(),
@@ -182,4 +185,54 @@ export async function init() {
     debugInfo.lastError = 'Init: ' + msg;
     setStatus('error');
   }
+}
+
+/**
+ * Open a Supabase Realtime subscription for this user's rows.
+ * When a remote device upserts a key, localStorage is updated and a
+ * 'dashboard:sync' CustomEvent is dispatched so components can re-read.
+ * Returns an unsubscribe cleanup function.
+ *
+ * Requires the table to be in the realtime publication — see supabase/schema.sql.
+ */
+export function subscribeRealtime() {
+  if (!supabase) return () => {};
+
+  debugInfo.realtimeStatus = 'connecting';
+
+  const channel = supabase
+    .channel(`ud:${USER_ID}`)
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'user_data', filter: `user_id=eq.${USER_ID}` },
+      (payload) => {
+        if (payload.eventType === 'DELETE') return;
+        const { key, value } = payload.new ?? {};
+        if (!key) return;
+
+        // Ignore echoes of our own writes (saved within the last 5 s)
+        const ts = _ownSaveTs.get(key);
+        if (ts && Date.now() - ts < 5000) return;
+
+        // Propagate remote value into localStorage and notify React components
+        try { localStorage.setItem(key, JSON.stringify(value)); } catch {}
+        debugInfo.lastRemoteUpdate = new Date().toISOString();
+        window.dispatchEvent(new CustomEvent('dashboard:sync', { detail: { key } }));
+        console.log('[dataService] realtime update:', key);
+      }
+    )
+    .subscribe((status) => {
+      if (status === 'SUBSCRIBED') {
+        debugInfo.realtimeStatus = 'connected';
+        console.log('[dataService] realtime connected');
+      } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+        debugInfo.realtimeStatus = 'error';
+        console.warn('[dataService] realtime status:', status);
+      }
+    });
+
+  return () => {
+    debugInfo.realtimeStatus = 'off';
+    supabase.removeChannel(channel);
+  };
 }

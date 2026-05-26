@@ -3,36 +3,59 @@ import { getEventsForToday } from './services/calendarService';
 import WeeklyReviewOverlay from './WeeklyReviewOverlay';
 import * as dataService from './services/dataService';
 
-function SyncDot() {
+// Hook: re-reads key from localStorage when a 'dashboard:sync' event arrives for it.
+// setState from useState is guaranteed stable, so the empty dep array is intentional.
+function useDataSync(key, setState) {
+  useEffect(() => {
+    const h = (e) => {
+      if (e.detail?.key !== key) return;
+      const raw = localStorage.getItem(key);
+      if (raw) try { setState(JSON.parse(raw)); } catch {}
+    };
+    window.addEventListener('dashboard:sync', h);
+    return () => window.removeEventListener('dashboard:sync', h);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+}
+
+function SyncDot({ onRefresh }) {
   const [status, setStatus] = useState(dataService.getSyncStatus());
   const [, tick] = useState(0);
-  useEffect(() => dataService.onSyncStatusChange(s => { setStatus(s); tick(n => n + 1); }), []);
+
+  useEffect(() => {
+    const unsub = dataService.onSyncStatusChange(s => { setStatus(s); tick(n => n + 1); });
+    const onSync = () => tick(n => n + 1);
+    window.addEventListener('dashboard:sync', onSync);
+    return () => { unsub(); window.removeEventListener('dashboard:sync', onSync); };
+  }, []);
 
   const color = status === 'synced' ? '#6ee7b7' : status === 'syncing' ? '#fbbf24' : '#f87171';
   const di    = dataService.debugInfo;
-  const lastRead = di.lastReadAt
-    ? new Date(di.lastReadAt).toLocaleTimeString('fi-FI', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  const fmt   = (iso) => iso
+    ? new Date(iso).toLocaleTimeString('fi-FI', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
     : '—';
+
+  const rtColor = di.realtimeStatus === 'connected' ? '#6ee7b7'
+                : di.realtimeStatus === 'connecting' ? '#fbbf24'
+                : di.realtimeStatus === 'error'      ? '#f87171'
+                :                                      '#3a4a3a';
 
   return (
     <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, lineHeight: 1.7, color: '#5a6a5a', textAlign: 'right' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 5 }}>
-        <div style={{ width: 6, height: 6, borderRadius: '50%', background: color, animation: status === 'syncing' ? 'pulse 1s ease-in-out infinite' : 'none', flexShrink: 0 }} />
-        <span style={{ color }}>
-          {status === 'synced' ? 'Synkronoitu' : status === 'syncing' ? 'Tallennetaan...' : 'Sync-virhe'}
-        </span>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 6, marginBottom: 2 }}>
+        <div style={{ width: 6, height: 6, borderRadius: '50%', background: color, flexShrink: 0, animation: status === 'syncing' ? 'pulse 1s ease-in-out infinite' : 'none' }} />
+        <span style={{ color }}>{status === 'synced' ? 'Synkronoitu' : status === 'syncing' ? 'Tallennetaan...' : 'Sync-virhe'}</span>
+        <button
+          onClick={onRefresh}
+          style={{ background: 'transparent', border: '1px solid rgba(255,255,255,0.08)', color: '#5a6a5a', padding: '1px 7px', borderRadius: 2, fontSize: 9, fontFamily: 'inherit', cursor: 'pointer', letterSpacing: '0.06em' }}
+          onMouseOver={e => { e.currentTarget.style.borderColor = '#6ee7b7'; e.currentTarget.style.color = '#6ee7b7'; }}
+          onMouseOut={e => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)'; e.currentTarget.style.color = '#5a6a5a'; }}
+        >Päivitä</button>
       </div>
       <div>user_id: <span style={{ color: '#7a8a7a' }}>{di.userId}</span></div>
-      <div>url: <span style={{ color: '#7a8a7a' }}>{di.supabaseUrl.replace('https://', '').slice(0, 30)}</span></div>
-      <div>viim. luku: <span style={{ color: '#7a8a7a' }}>{lastRead}</span></div>
-      <div>
-        avaimia Supabasesta: <span style={{ color: '#7a8a7a' }}>{di.keysLoaded ?? '—'}</span>
-        {di.keysMigrated !== null && di.keysMigrated > 0 &&
-          <span style={{ color: '#fbbf24' }}> · siirretty: {di.keysMigrated}</span>}
-      </div>
-      {di.lastError && (
-        <div style={{ color: '#f87171', maxWidth: 300, wordBreak: 'break-all' }}>⚠ {di.lastError}</div>
-      )}
+      <div>url: <span style={{ color: '#7a8a7a' }}>{(di.supabaseUrl || '').replace('https://', '').slice(0, 36)}</span></div>
+      <div>init luku: <span style={{ color: '#7a8a7a' }}>{fmt(di.lastReadAt)}</span> · avaimia: <span style={{ color: '#7a8a7a' }}>{di.keysLoaded ?? '—'}</span>{di.keysMigrated > 0 ? <span style={{ color: '#fbbf24' }}> +{di.keysMigrated}↑</span> : null}</div>
+      <div>realtime: <span style={{ color: rtColor }}>{di.realtimeStatus}</span>{di.lastRemoteUpdate ? <span> · päiv. {fmt(di.lastRemoteUpdate)}</span> : null}</div>
+      {di.lastError && <div style={{ color: '#f87171', maxWidth: 320, wordBreak: 'break-all' }}>⚠ {di.lastError}</div>}
     </div>
   );
 }
@@ -509,6 +532,7 @@ const loadTT = () => {
 
 function TimeTrackerWidget() {
   const [store, setStore]           = useState(loadTT);
+  useDataSync(TT_KEY, setStore);
   const [view, setView]             = useState("today");
   const [, setTick]                 = useState(0);
   const [monthOffset, setMonthOffset] = useState(0);
@@ -806,6 +830,7 @@ function TodayWidget({ weatherState, electricityState, weekPlan, setWeekPlan, re
   const [energyMap, setEnergyMap]   = useState(() => {
     try { return JSON.parse(localStorage.getItem(EL_KEY)) || {}; } catch { return {}; }
   });
+  useDataSync(EL_KEY, setEnergyMap);
   const [addingEvent, setAddingEvent] = useState(false);
   const [newTime, setNewTime]               = useState("");
   const [newTitle, setNewTitle]             = useState("");
@@ -1091,6 +1116,7 @@ function StudiesProjectsCard() {
       return raw ? JSON.parse(raw) : SP_DEFAULTS;
     } catch { return SP_DEFAULTS; }
   });
+  useDataSync(SP_KEY, setData);
   const [editMode, setEditMode]       = useState(false);
   const [addingCourse, setAddingCourse] = useState(false);
   const [addingProject, setAddingProject] = useState(false);
@@ -1237,6 +1263,7 @@ function DailyRoutinesWidget() {
       return s;
     } catch { return { config: { ...RT_DEFAULTS.config }, days: {} }; }
   });
+  useDataSync(RT_KEY, setStore);
   const [editMode, setEditMode] = useState(false);
   const [newSupp, setNewSupp]   = useState("");
   const [newHabit, setNewHabit] = useState("");
@@ -1375,6 +1402,7 @@ function WeeklyGoalsWidget() {
       return s;
     } catch { return { current: { weekStart: getMonday(), goals: [] }, history: [] }; }
   });
+  useDataSync(WG_KEY, setStore);
   const [editMode, setEditMode]       = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [newTitle, setNewTitle]       = useState("");
@@ -1491,6 +1519,8 @@ function LeviWidget({ now }) {
   const [maintenance, setMaintenance] = useState(() => {
     try { return JSON.parse(localStorage.getItem("maintenance")) || MOCK_MAINTENANCE; } catch { return MOCK_MAINTENANCE; }
   });
+  useDataSync(LEVI_KEY, setData);
+  useDataSync("maintenance", setMaintenance);
   const [editMode, setEditMode]         = useState(false);
   const [showHistory, setShowHistory]   = useState(false);
   const [addingTenant, setAddingTenant] = useState(false);
@@ -1732,6 +1762,8 @@ function MorningDashboard({ onLogout }) {
   const [recurringEvents, setRecurringEvents] = useState(() => {
     try { return JSON.parse(localStorage.getItem("recurringEvents")) || INITIAL_WEEK; } catch { return INITIAL_WEEK; }
   });
+  useDataSync("weekPlan", setWeekPlan);
+  useDataSync("recurringEvents", setRecurringEvents);
   const [dataReady, setDataReady]             = useState(false);
   const [showReview, setShowReview]           = useState(false);
   const [editMode, setEditMode]               = useState(false);
@@ -1747,6 +1779,10 @@ function MorningDashboard({ onLogout }) {
 
   useEffect(() => {
     dataService.init().finally(() => setDataReady(true));
+  }, []);
+
+  useEffect(() => {
+    return dataService.subscribeRealtime();
   }, []);
 
   useEffect(() => {
@@ -2014,7 +2050,7 @@ function MorningDashboard({ onLogout }) {
       <div style={{ padding: "0 32px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 10, color: "#2a3a2a", letterSpacing: "0.1em" }}>
         <span>MORNING DASHBOARD v0.4</span>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <SyncDot />
+          <SyncDot onRefresh={() => window.location.reload()} />
           <span>SÄÄ: OPEN-METEO · SÄHKÖ: SPOT-HINTA.FI</span>
         </div>
       </div>

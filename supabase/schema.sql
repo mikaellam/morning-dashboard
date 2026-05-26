@@ -17,3 +17,7 @@ create policy "anon full access"
   on user_data for all
   using (true)
   with check (true);
+
+-- Enable real-time for this table so Supabase broadcasts row changes.
+-- Run once; safe to re-run (ADD TABLE is idempotent in Supabase).
+alter publication supabase_realtime add table user_data;

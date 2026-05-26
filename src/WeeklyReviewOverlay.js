@@ -108,6 +108,18 @@ export default function WeeklyReviewOverlay({ onClose, now }) {
 
   const prevData = (() => { try { return loadWeekData(py, pw); } catch { return defaultData(); } })();
 
+  // Real-time sync: update review data when another device saves a weeklyReview key
+  useEffect(() => {
+    const h = (e) => {
+      const k = e.detail?.key;
+      if (!k?.startsWith('weeklyReview:')) return;
+      if (k === weekKey(ty, tw)) setThisData(loadWeekData(ty, tw));
+      if (k === weekKey(ny, nw)) setNextData(loadWeekData(ny, nw));
+    };
+    window.addEventListener('dashboard:sync', h);
+    return () => window.removeEventListener('dashboard:sync', h);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     dataService.save(weekKey(ty, tw), thisData);
     pruneOldReviews();
