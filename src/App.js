@@ -1832,6 +1832,17 @@ function MorningDashboard({ onLogout }) {
           </svg>
           Outlook
         </a>
+        <a href="https://dashboard.hostaway.com" target="_blank" rel="noopener noreferrer"
+          title="Hostaway"
+          style={{ display: "flex", alignItems: "center", gap: 5, padding: "4px 10px", background: "rgba(0,178,169,0.08)", border: "1px solid rgba(0,178,169,0.2)", borderRadius: 2, textDecoration: "none", color: "#2dd4bf", fontSize: 11, letterSpacing: "0.05em", transition: "background 0.2s" }}
+          onMouseOver={e => e.currentTarget.style.background = "rgba(0,178,169,0.16)"}
+          onMouseOut={e => e.currentTarget.style.background = "rgba(0,178,169,0.08)"}>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
+            <path d="M3 10.5L12 3l9 7.5V21a1 1 0 01-1 1H5a1 1 0 01-1-1V10.5z" fill="rgba(0,178,169,0.15)" stroke="#2dd4bf" strokeWidth="1.5" strokeLinejoin="round"/>
+            <path d="M9 22V13h6v9" stroke="#2dd4bf" strokeWidth="1.5" strokeLinejoin="round"/>
+          </svg>
+          Hostaway
+        </a>
       </div>
 
       {/* Main grid */}
