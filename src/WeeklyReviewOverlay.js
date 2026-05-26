@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import * as dataService from './services/dataService';
 
 const CATEGORIES = ["Työ", "Opiskelu", "Omat projektit", "Henkilökohtainen"];
 const CAT_COLORS = {
@@ -74,7 +75,7 @@ function pruneOldReviews() {
     return m ? { key: k, sort: parseInt(m[1]) * 100 + parseInt(m[2]) } : null;
   }).filter(Boolean);
   parsed.sort((a, b) => a.sort - b.sort);
-  parsed.slice(0, parsed.length - 12).forEach(({ key }) => localStorage.removeItem(key));
+  parsed.slice(0, parsed.length - 12).forEach(({ key }) => dataService.remove(key));
 }
 
 const msToHrs = (ms) => {
@@ -108,12 +109,12 @@ export default function WeeklyReviewOverlay({ onClose, now }) {
   const prevData = (() => { try { return loadWeekData(py, pw); } catch { return defaultData(); } })();
 
   useEffect(() => {
-    localStorage.setItem(weekKey(ty, tw), JSON.stringify(thisData));
+    dataService.save(weekKey(ty, tw), thisData);
     pruneOldReviews();
   }, [thisData, ty, tw]);
 
   useEffect(() => {
-    localStorage.setItem(weekKey(ny, nw), JSON.stringify(nextData));
+    dataService.save(weekKey(ny, nw), nextData);
   }, [nextData, ny, nw]);
 
   // Read external localStorage sources once on mount

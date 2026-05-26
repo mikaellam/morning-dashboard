@@ -1,6 +1,20 @@
 import { useState, useEffect, useCallback } from "react";
 import { getEventsForToday } from './services/calendarService';
 import WeeklyReviewOverlay from './WeeklyReviewOverlay';
+import * as dataService from './services/dataService';
+
+function SyncDot() {
+  const [status, setStatus] = useState(dataService.getSyncStatus());
+  useEffect(() => dataService.onSyncStatusChange(setStatus), []);
+  const color = status === 'synced' ? '#6ee7b7' : status === 'syncing' ? '#fbbf24' : '#f87171';
+  const tip   = status === 'synced' ? 'Synkronoitu' : status === 'syncing' ? 'Tallennetaan...' : 'Sync-virhe';
+  return (
+    <div title={tip} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+      <div style={{ width: 6, height: 6, borderRadius: '50%', background: color, animation: status === 'syncing' ? 'pulse 1s ease-in-out infinite' : 'none' }} />
+      {status !== 'synced' && <span style={{ fontSize: 9, color, letterSpacing: '0.08em' }}>{tip}</span>}
+    </div>
+  );
+}
 
 const AUTH_KEY = "dashboard_auth";
 
@@ -479,7 +493,7 @@ function TimeTrackerWidget() {
   const [monthOffset, setMonthOffset] = useState(0);
   const [summary, setSummary]       = useState(null);
 
-  useEffect(() => { localStorage.setItem(TT_KEY, JSON.stringify(store)); }, [store]);
+  useEffect(() => { dataService.save(TT_KEY, store); }, [store]);
 
   const isRunning = !!store.today.active;
   useEffect(() => {
@@ -777,7 +791,7 @@ function TodayWidget({ weatherState, electricityState, weekPlan, setWeekPlan, re
   const [newRecurring, setNewRecurring]     = useState(false);
   const [, setTick]                         = useState(0);
 
-  useEffect(() => { localStorage.setItem(EL_KEY, JSON.stringify(energyMap)); }, [energyMap]);
+  useEffect(() => { dataService.save(EL_KEY, energyMap); }, [energyMap]);
   useEffect(() => {
     const t = setInterval(() => setTick(n => n + 1), 30000);
     return () => clearInterval(t);
@@ -1062,7 +1076,7 @@ function StudiesProjectsCard() {
   const [newCourse, setNewCourse]     = useState({ name: "", description: "", deadline: "", moodleUrl: "" });
   const [newProject, setNewProject]   = useState({ name: "", description: "", status: "active", url: "" });
 
-  useEffect(() => { localStorage.setItem(SP_KEY, JSON.stringify(data)); }, [data]);
+  useEffect(() => { dataService.save(SP_KEY, data); }, [data]);
 
   const STATUS_COLORS = { active: "#6ee7b7", paused: "#fbbf24", done: "#5a6a5a" };
   const STATUS_FI     = { active: "Aktiivinen", paused: "Tauolla", done: "Valmis" };
@@ -1206,7 +1220,7 @@ function DailyRoutinesWidget() {
   const [newSupp, setNewSupp]   = useState("");
   const [newHabit, setNewHabit] = useState("");
 
-  useEffect(() => { localStorage.setItem(RT_KEY, JSON.stringify(store)); }, [store]);
+  useEffect(() => { dataService.save(RT_KEY, store); }, [store]);
 
   const today    = fiStr();
   const todayRaw = store.days[today] || {};
@@ -1345,7 +1359,7 @@ function WeeklyGoalsWidget() {
   const [newTitle, setNewTitle]       = useState("");
   const [newCat, setNewCat]           = useState("");
 
-  useEffect(() => { localStorage.setItem(WG_KEY, JSON.stringify(store)); }, [store]);
+  useEffect(() => { dataService.save(WG_KEY, store); }, [store]);
 
   const goals = store.current.goals;
   const done  = goals.filter(g => g.done).length;
@@ -1462,8 +1476,8 @@ function LeviWidget({ now }) {
   const [newTenant, setNewTenant]       = useState({ name: "", rent: "", billingDay: "1", notes: "" });
   const [newTask, setNewTask]           = useState("");
 
-  useEffect(() => { localStorage.setItem(LEVI_KEY, JSON.stringify(data)); }, [data]);
-  useEffect(() => { localStorage.setItem("maintenance", JSON.stringify(maintenance)); }, [maintenance]);
+  useEffect(() => { dataService.save(LEVI_KEY, data); }, [data]);
+  useEffect(() => { dataService.save("maintenance", maintenance); }, [maintenance]);
 
   const month    = now.getMonth() + 1;
   const year     = now.getFullYear();
@@ -1697,6 +1711,7 @@ function MorningDashboard({ onLogout }) {
   const [recurringEvents, setRecurringEvents] = useState(() => {
     try { return JSON.parse(localStorage.getItem("recurringEvents")) || INITIAL_WEEK; } catch { return INITIAL_WEEK; }
   });
+  const [dataReady, setDataReady]             = useState(false);
   const [showReview, setShowReview]           = useState(false);
   const [editMode, setEditMode]               = useState(false);
   const [editDay, setEditDay]                 = useState(null);
@@ -1710,11 +1725,15 @@ function MorningDashboard({ onLogout }) {
   }, []);
 
   useEffect(() => {
-    localStorage.setItem("weekPlan", JSON.stringify(weekPlan));
+    dataService.init().finally(() => setDataReady(true));
+  }, []);
+
+  useEffect(() => {
+    dataService.save("weekPlan", weekPlan);
   }, [weekPlan]);
 
   useEffect(() => {
-    localStorage.setItem("recurringEvents", JSON.stringify(recurringEvents));
+    dataService.save("recurringEvents", recurringEvents);
   }, [recurringEvents]);
 
   const dayIndex  = (now.getDay() + 6) % 7;
@@ -1748,6 +1767,12 @@ function MorningDashboard({ onLogout }) {
   const dateStr = now.toLocaleDateString("fi-FI", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
   const timeStr = now.toLocaleTimeString("fi-FI", { hour: "2-digit", minute: "2-digit" });
   const isReviewDay = now.getDay() === 0 || now.getDay() === 1;
+
+  if (!dataReady) return (
+    <div style={{ minHeight: "100vh", background: "#0d1117", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'DM Mono', monospace" }}>
+      <div style={{ fontSize: 10, color: "#3a4a3a", letterSpacing: "0.18em", textTransform: "uppercase" }}>Ladataan...</div>
+    </div>
+  );
 
   return (
     <>
@@ -1965,9 +1990,12 @@ function MorningDashboard({ onLogout }) {
       </div>
 
       {/* Footer */}
-      <div style={{ padding: "0 32px 20px", display: "flex", justifyContent: "space-between", fontSize: 10, color: "#2a3a2a", letterSpacing: "0.1em" }}>
+      <div style={{ padding: "0 32px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 10, color: "#2a3a2a", letterSpacing: "0.1em" }}>
         <span>MORNING DASHBOARD v0.4</span>
-        <span>SÄÄ: OPEN-METEO · SÄHKÖ: SPOT-HINTA.FI</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <SyncDot />
+          <span>SÄÄ: OPEN-METEO · SÄHKÖ: SPOT-HINTA.FI</span>
+        </div>
       </div>
     </div>
     </>
