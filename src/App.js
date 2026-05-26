@@ -5,13 +5,34 @@ import * as dataService from './services/dataService';
 
 function SyncDot() {
   const [status, setStatus] = useState(dataService.getSyncStatus());
-  useEffect(() => dataService.onSyncStatusChange(setStatus), []);
+  const [, tick] = useState(0);
+  useEffect(() => dataService.onSyncStatusChange(s => { setStatus(s); tick(n => n + 1); }), []);
+
   const color = status === 'synced' ? '#6ee7b7' : status === 'syncing' ? '#fbbf24' : '#f87171';
-  const tip   = status === 'synced' ? 'Synkronoitu' : status === 'syncing' ? 'Tallennetaan...' : 'Sync-virhe';
+  const di    = dataService.debugInfo;
+  const lastRead = di.lastReadAt
+    ? new Date(di.lastReadAt).toLocaleTimeString('fi-FI', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    : '—';
+
   return (
-    <div title={tip} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-      <div style={{ width: 6, height: 6, borderRadius: '50%', background: color, animation: status === 'syncing' ? 'pulse 1s ease-in-out infinite' : 'none' }} />
-      {status !== 'synced' && <span style={{ fontSize: 9, color, letterSpacing: '0.08em' }}>{tip}</span>}
+    <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, lineHeight: 1.7, color: '#5a6a5a', textAlign: 'right' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 5 }}>
+        <div style={{ width: 6, height: 6, borderRadius: '50%', background: color, animation: status === 'syncing' ? 'pulse 1s ease-in-out infinite' : 'none', flexShrink: 0 }} />
+        <span style={{ color }}>
+          {status === 'synced' ? 'Synkronoitu' : status === 'syncing' ? 'Tallennetaan...' : 'Sync-virhe'}
+        </span>
+      </div>
+      <div>user_id: <span style={{ color: '#7a8a7a' }}>{di.userId}</span></div>
+      <div>url: <span style={{ color: '#7a8a7a' }}>{di.supabaseUrl.replace('https://', '').slice(0, 30)}</span></div>
+      <div>viim. luku: <span style={{ color: '#7a8a7a' }}>{lastRead}</span></div>
+      <div>
+        avaimia Supabasesta: <span style={{ color: '#7a8a7a' }}>{di.keysLoaded ?? '—'}</span>
+        {di.keysMigrated !== null && di.keysMigrated > 0 &&
+          <span style={{ color: '#fbbf24' }}> · siirretty: {di.keysMigrated}</span>}
+      </div>
+      {di.lastError && (
+        <div style={{ color: '#f87171', maxWidth: 300, wordBreak: 'break-all' }}>⚠ {di.lastError}</div>
+      )}
     </div>
   );
 }

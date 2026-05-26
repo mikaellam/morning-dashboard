@@ -19,10 +19,19 @@ const getUserId = () => USER_ID;
 // Keys that must never sync to Supabase (device-specific state)
 const NO_SYNC = new Set(['dashboard_auth']);
 
-// ── Sync status ───────────────────────────────────────────────────────────────
+// ── Sync status + debug info ──────────────────────────────────────────────────
 
 let _status = 'synced';
 const _listeners = new Set();
+
+export const debugInfo = {
+  userId:        USER_ID,
+  supabaseUrl:   process.env.REACT_APP_SUPABASE_URL || '(not set)',
+  lastReadAt:    null,   // ISO string, set after successful init()
+  keysLoaded:    null,   // number of rows fetched from Supabase
+  keysMigrated:  null,   // number of local-only keys uploaded
+  lastError:     null,   // most recent error message
+};
 
 export function getSyncStatus() { return _status; }
 
@@ -64,7 +73,9 @@ function scheduleSave(key, value) {
     try {
       await flushOne(key, value);
     } catch (err) {
-      console.warn('[dataService] save failed:', key, err.message);
+      const msg = err.message || String(err);
+      console.warn('[dataService] save failed:', key, msg);
+      debugInfo.lastError = 'Save ' + key + ': ' + msg;
       setStatus('error');
       _inFlight--;
       return;
@@ -106,13 +117,16 @@ export async function remove(key) {
  */
 export async function init() {
   if (!supabase) {
-    console.warn('[dataService] Supabase not configured — localStorage only');
+    const msg = 'Supabase not configured (env vars missing)';
+    console.warn('[dataService]', msg);
+    debugInfo.lastError = msg;
     setStatus('error');
     return;
   }
 
   const uid = getUserId();
   setStatus('syncing');
+  debugInfo.lastError = null;
 
   try {
     // 1. Fetch all rows for this user
@@ -130,6 +144,9 @@ export async function init() {
       try { localStorage.setItem(row.key, JSON.stringify(row.value)); } catch {}
     }
 
+    debugInfo.keysLoaded = remoteKeys.size;
+    debugInfo.lastReadAt = new Date().toISOString();
+
     // 3. Migrate local-only keys to Supabase (first-run migration)
     const toMigrate = [];
     for (const lsKey of Object.keys(localStorage)) {
@@ -146,16 +163,23 @@ export async function init() {
       } catch {}
     }
 
+    debugInfo.keysMigrated = toMigrate.length;
+
     if (toMigrate.length > 0) {
       const { error: migErr } = await supabase
         .from('user_data')
         .upsert(toMigrate, { onConflict: 'user_id,key' });
-      if (migErr) console.warn('[dataService] migration partial failure:', migErr.message);
+      if (migErr) {
+        console.warn('[dataService] migration partial failure:', migErr.message);
+        debugInfo.lastError = 'Migration: ' + migErr.message;
+      }
     }
 
     setStatus('synced');
   } catch (err) {
-    console.warn('[dataService] init failed — using localStorage:', err.message);
+    const msg = err.message || String(err);
+    console.warn('[dataService] init failed — using localStorage:', msg);
+    debugInfo.lastError = 'Init: ' + msg;
     setStatus('error');
   }
 }
