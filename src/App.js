@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { getEventsForToday } from './services/calendarService';
+import WeeklyReviewOverlay from './WeeklyReviewOverlay';
 
 const AUTH_KEY = "dashboard_auth";
 
@@ -1696,6 +1697,7 @@ function MorningDashboard({ onLogout }) {
   const [recurringEvents, setRecurringEvents] = useState(() => {
     try { return JSON.parse(localStorage.getItem("recurringEvents")) || INITIAL_WEEK; } catch { return INITIAL_WEEK; }
   });
+  const [showReview, setShowReview]           = useState(false);
   const [editMode, setEditMode]               = useState(false);
   const [editDay, setEditDay]                 = useState(null);
   const [newEventTime, setNewEventTime]       = useState("");
@@ -1745,8 +1747,11 @@ function MorningDashboard({ onLogout }) {
 
   const dateStr = now.toLocaleDateString("fi-FI", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
   const timeStr = now.toLocaleTimeString("fi-FI", { hour: "2-digit", minute: "2-digit" });
+  const isReviewDay = now.getDay() === 0 || now.getDay() === 1;
 
   return (
+    <>
+    {showReview && <WeeklyReviewOverlay onClose={() => setShowReview(false)} now={now} />}
     <div style={{
       minHeight: "100vh",
       background: "#0d1117",
@@ -1798,11 +1803,28 @@ function MorningDashboard({ onLogout }) {
           </div>
           <div style={{ fontSize: 12, color: "#5a6a5a", marginTop: 4, textTransform: "capitalize" }}>{dateStr}</div>
         </div>
-        <div style={{ textAlign: "right" }}>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8 }}>
           <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 36, fontWeight: 400, color: "#6ee7b7", letterSpacing: "-0.03em" }}>{timeStr}</div>
-          <button className="btn-ghost" onClick={onLogout} style={{ marginTop: 6, fontSize: 9, letterSpacing: "0.1em" }}>
-            kirjaudu ulos
-          </button>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <button
+              onClick={() => setShowReview(true)}
+              style={{
+                background: isReviewDay ? "rgba(110,231,183,0.08)" : "transparent",
+                border: `1px solid ${isReviewDay ? "rgba(110,231,183,0.4)" : "rgba(255,255,255,0.1)"}`,
+                color: isReviewDay ? "#6ee7b7" : "#6a7a6a",
+                padding: "5px 12px", borderRadius: 2, fontFamily: "inherit",
+                fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", cursor: "pointer",
+                animation: isReviewDay ? "pulse 2s ease-in-out infinite" : "none",
+              }}
+              onMouseOver={e => { e.currentTarget.style.borderColor = "#6ee7b7"; e.currentTarget.style.color = "#6ee7b7"; e.currentTarget.style.animation = "none"; }}
+              onMouseOut={e => { e.currentTarget.style.borderColor = isReviewDay ? "rgba(110,231,183,0.4)" : "rgba(255,255,255,0.1)"; e.currentTarget.style.color = isReviewDay ? "#6ee7b7" : "#6a7a6a"; e.currentTarget.style.animation = isReviewDay ? "pulse 2s ease-in-out infinite" : "none"; }}
+            >
+              Viikkokatsaus
+            </button>
+            <button className="btn-ghost" onClick={onLogout} style={{ fontSize: 9, letterSpacing: "0.1em" }}>
+              kirjaudu ulos
+            </button>
+          </div>
         </div>
       </div>
 
@@ -1948,5 +1970,6 @@ function MorningDashboard({ onLogout }) {
         <span>SÄÄ: OPEN-METEO · SÄHKÖ: SPOT-HINTA.FI</span>
       </div>
     </div>
+    </>
   );
 }
