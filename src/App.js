@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { getEventsForToday } from './services/calendarService';
 
 const AUTH_KEY = "dashboard_auth";
 
@@ -182,8 +183,7 @@ function useWeather() {
   return state;
 }
 
-function WeatherCard() {
-  const { loading, error, data } = useWeather();
+function WeatherCard({ loading, error, data }) {
 
   if (loading) {
     return (
@@ -340,8 +340,7 @@ function useElectricity() {
   return state;
 }
 
-function ElectricityCard() {
-  const { loading, error, today, tomorrowAvg } = useElectricity();
+function ElectricityCard({ loading, error, today, tomorrowAvg }) {
   const currentHour = new Date().getHours();
 
   if (loading) {
@@ -758,6 +757,298 @@ function TimeTrackerWidget() {
   );
 }
 
+// ── Today Widget ─────────────────────────────────────────────────────────────
+
+const EL_KEY = "energyLevel";
+const ENERGY_OPTS = [
+  { value: "low",    fi: "Matala", color: "#f87171" },
+  { value: "medium", fi: "Keski",  color: "#fbbf24" },
+  { value: "high",   fi: "Korkea", color: "#4ade80" },
+];
+const SOURCE_BADGE = {
+  manual:  { bg: "rgba(255,255,255,0.04)", color: "#4a5a4a",  label: "oma" },
+  outlook: { bg: "rgba(96,165,250,0.08)",  color: "#60a5fa",  label: "outlook" },
+  apple:   { bg: "rgba(209,213,219,0.06)", color: "#9ca3af",  label: "apple" },
+};
+
+function TodayWidget({ weatherState, electricityState, weekPlan, setWeekPlan, recurringEvents, setRecurringEvents, todayName, now, forestReminders, setForestReminders }) {
+  const [energyMap, setEnergyMap]           = useState(() => {
+    try { return JSON.parse(localStorage.getItem(EL_KEY)) || {}; } catch { return {}; }
+  });
+  const [forestEditMode, setForestEditMode] = useState(false);
+  const [addingEvent, setAddingEvent]       = useState(false);
+  const [newTime, setNewTime]               = useState("");
+  const [newTitle, setNewTitle]             = useState("");
+  const [newRecurring, setNewRecurring]     = useState(false);
+  const [, setTick]                         = useState(0);
+
+  useEffect(() => { localStorage.setItem(EL_KEY, JSON.stringify(energyMap)); }, [energyMap]);
+  useEffect(() => {
+    const t = setInterval(() => setTick(n => n + 1), 30000);
+    return () => clearInterval(t);
+  }, []);
+
+  const todayStr    = fiStr();
+  const month       = now.getMonth() + 1;
+  const energyLevel = energyMap[todayStr] || null;
+  const setEnergy   = (v) => setEnergyMap(m => ({ ...m, [todayStr]: m[todayStr] === v ? null : v }));
+  const forestReminder = forestReminders[month] || FOREST_REMINDERS[month];
+
+  const events  = getEventsForToday(weekPlan, recurringEvents, todayName);
+  const nowMins = now.getHours() * 60 + now.getMinutes();
+  const evMins  = (e) => { const [h, m] = (e.time || "0:0").split(":").map(Number); return h * 60 + m; };
+  const nextEv  = events.find(e => evMins(e) > nowMins) || null;
+
+  const addEvent = () => {
+    if (!newTime || !newTitle.trim()) return;
+    const ev = { time: newTime, title: newTitle.trim() };
+    if (newRecurring) {
+      setRecurringEvents(p => ({ ...p, [todayName]: [...(p[todayName] || []), ev].sort((a, b) => a.time.localeCompare(b.time)) }));
+    } else {
+      setWeekPlan(p => ({ ...p, [todayName]: [...(p[todayName] || []), ev].sort((a, b) => a.time.localeCompare(b.time)) }));
+    }
+    setNewTime(""); setNewTitle(""); setNewRecurring(false); setAddingEvent(false);
+  };
+
+  // Context reads ── all reads are best-effort from localStorage
+  const ttToday = (() => {
+    try {
+      const s = JSON.parse(localStorage.getItem(TT_KEY));
+      if (!s || s.today?.date !== todayStr) return emptyAccum();
+      const acc = { ...s.today.accumulated };
+      if (s.today.active) acc[s.today.active.category] = (acc[s.today.active.category] || 0) + Date.now() - s.today.active.startedAt;
+      return acc;
+    } catch { return emptyAccum(); }
+  })();
+  const ttTotal = Object.values(ttToday).reduce((a, b) => a + b, 0);
+
+  const weeklyGoals = (() => {
+    try { return JSON.parse(localStorage.getItem(WG_KEY))?.current?.goals || []; } catch { return []; }
+  })();
+
+  const upcomingDeadlines = (() => {
+    try {
+      const sp = JSON.parse(localStorage.getItem(SP_KEY));
+      if (!sp) return [];
+      const base = new Date(); base.setHours(0, 0, 0, 0);
+      return (sp.courses || [])
+        .filter(c => c.deadline)
+        .map(c => {
+          const dl = new Date(c.deadline); dl.setHours(0, 0, 0, 0);
+          return { id: c.id, name: c.name, daysLeft: Math.round((dl - base) / 86400000) };
+        })
+        .filter(c => c.daysLeft >= 0 && c.daysLeft <= 7)
+        .sort((a, b) => a.daysLeft - b.daysLeft);
+    } catch { return []; }
+  })();
+
+  const { data: wData } = weatherState || {};
+  const wSummary = wData ? {
+    temp:  Math.round(wData.current_weather.temperature),
+    emoji: (WMO[wData.current_weather.weathercode] || { emoji: "🌡️" }).emoji,
+  } : null;
+  const ePrices  = electricityState?.today || null;
+  const eCurrent = ePrices ? ePrices[now.getHours()] : null;
+  const eColor   = eCurrent == null ? "#5a6a5a" : eCurrent < 5 ? "#4ade80" : eCurrent < 10 ? "#fbbf24" : "#f87171";
+
+  return (
+    <div className="card" style={{ gridColumn: "1 / -1" }}>
+
+      {/* ── Day summary bar ─────────────────────────────────── */}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 16, alignItems: "center", marginBottom: 20, paddingBottom: 16, borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
+        <div style={{ flex: "1 1 180px" }}>
+          <div className="label" style={{ marginBottom: 2 }}>Tänään — {todayName}</div>
+          <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 20, color: "#f0f0f0", textTransform: "capitalize" }}>
+            {now.toLocaleDateString("fi-FI", { day: "numeric", month: "long", year: "numeric" })}
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center" }}>
+          {wSummary && (
+            <div style={{ display: "flex", alignItems: "baseline", gap: 5 }}>
+              <span style={{ fontSize: 22 }}>{wSummary.emoji}</span>
+              <span style={{ fontSize: 20, color: "#e8e8e8" }}>{wSummary.temp > 0 ? "+" : ""}{wSummary.temp}°</span>
+            </div>
+          )}
+          {eCurrent != null && (
+            <span style={{ fontSize: 13, color: eColor }}>⚡ {eCurrent.toFixed(1)} snt</span>
+          )}
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ fontSize: 10, color: "#5a6a5a" }}>Energia:</span>
+            {ENERGY_OPTS.map(opt => (
+              <button key={opt.value} onClick={() => setEnergy(opt.value)} className="btn-ghost"
+                style={{ fontSize: 9, padding: "3px 8px", color: energyLevel === opt.value ? opt.color : "#5a6a5a", borderColor: energyLevel === opt.value ? opt.color + "55" : "rgba(255,255,255,0.08)", transition: "all 0.2s" }}>
+                {opt.fi}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* ── Timeline + Context ──────────────────────────────── */}
+      <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
+
+        {/* Timeline */}
+        <div style={{ flex: "3 1 300px", minWidth: 0 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+            <div className="label" style={{ marginBottom: 0 }}>Aikajana</div>
+            <button className="btn-ghost" onClick={() => setAddingEvent(a => !a)} style={{ fontSize: 9 }}>
+              {addingEvent ? "✕ Peruuta" : "+ Tapahtuma"}
+            </button>
+          </div>
+
+          {addingEvent && (
+            <div style={{ display: "flex", gap: 6, marginBottom: 10, flexWrap: "wrap", alignItems: "center", padding: "8px 10px", background: "rgba(110,231,183,0.04)", borderRadius: 2, border: "1px solid rgba(110,231,183,0.1)" }}>
+              <input type="time" value={newTime} onChange={e => setNewTime(e.target.value)} style={{ width: 88 }} />
+              <input type="text" value={newTitle} onChange={e => setNewTitle(e.target.value)} placeholder="Tapahtuma"
+                style={{ flex: 1, minWidth: 120 }} onKeyDown={e => e.key === "Enter" && addEvent()} />
+              <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 10, color: "#7a8a7a", cursor: "pointer", whiteSpace: "nowrap" }}>
+                <input type="checkbox" checked={newRecurring} onChange={e => setNewRecurring(e.target.checked)} style={{ accentColor: "#6ee7b7" }} />
+                🔁 Toistuva
+              </label>
+              <button className="btn" onClick={addEvent}>Lisää</button>
+            </div>
+          )}
+
+          {events.length === 0 ? (
+            <div style={{ fontSize: 12, color: "#5a6a5a", padding: "20px 0", textAlign: "center" }}>
+              Ei merkintöjä — lisää viikkosuunnitelmaan tai + Tapahtuma
+            </div>
+          ) : (
+            <div>
+              {events.map((ev, idx) => {
+                const evMin  = evMins(ev);
+                const isPast = evMin < nowMins;
+                const isNext = ev === nextEv;
+                const showNowLine =
+                  (idx === 0 && evMin > nowMins) ||
+                  (idx > 0 && evMin > nowMins && evMins(events[idx - 1]) <= nowMins);
+                const badge = SOURCE_BADGE[ev.source] || SOURCE_BADGE.manual;
+                return (
+                  <div key={ev.id}>
+                    {showNowLine && (
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "6px 0" }}>
+                        <div style={{ width: 7, height: 7, borderRadius: "50%", background: "#6ee7b7", flexShrink: 0 }} />
+                        <div style={{ flex: 1, height: 1, background: "rgba(110,231,183,0.25)" }} />
+                        <span style={{ fontSize: 9, color: "#6ee7b7", flexShrink: 0 }}>
+                          {now.toLocaleTimeString("fi-FI", { hour: "2-digit", minute: "2-digit" })}
+                        </span>
+                      </div>
+                    )}
+                    <div style={{
+                      display: "flex", alignItems: "center", gap: 8, padding: "6px 0",
+                      borderBottom: "1px solid rgba(255,255,255,0.04)",
+                      background: isNext ? "rgba(110,231,183,0.03)" : "transparent",
+                    }}>
+                      <div style={{ width: 3, height: 28, borderRadius: 2, flexShrink: 0, background: isPast ? "rgba(255,255,255,0.08)" : isNext ? "#6ee7b7" : "rgba(110,231,183,0.4)" }} />
+                      <span style={{ fontSize: 11, color: isPast ? "#3a4a3a" : "#6ee7b7", minWidth: 36, fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>{ev.time}</span>
+                      <span style={{ fontSize: 13, color: isPast ? "#4a5a4a" : isNext ? "#f0f0f0" : "#c4c4c4", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", textDecoration: isPast ? "line-through" : "none" }}>
+                        {ev.title}
+                        {ev.recurring && <span style={{ fontSize: 9, color: "#4a5a4a", marginLeft: 5 }}>🔁</span>}
+                      </span>
+                      {ev.duration && <span style={{ fontSize: 10, color: "#5a6a5a", flexShrink: 0 }}>{ev.duration}</span>}
+                      <span style={{ fontSize: 8, padding: "1px 5px", borderRadius: 1, background: badge.bg, color: badge.color, flexShrink: 0, letterSpacing: "0.05em", textTransform: "uppercase" }}>{badge.label}</span>
+                      {isNext && <span style={{ fontSize: 9, color: "#6ee7b7", flexShrink: 0 }}>← seuraava</span>}
+                    </div>
+                  </div>
+                );
+              })}
+              {events.every(e => evMins(e) <= nowMins) && (
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>
+                  <div style={{ width: 7, height: 7, borderRadius: "50%", background: "#6ee7b7", flexShrink: 0 }} />
+                  <div style={{ flex: 1, height: 1, background: "rgba(110,231,183,0.25)" }} />
+                  <span style={{ fontSize: 9, color: "#6ee7b7" }}>{now.toLocaleTimeString("fi-FI", { hour: "2-digit", minute: "2-digit" })}</span>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Context panel */}
+        <div style={{ flex: "1 1 200px", display: "flex", flexDirection: "column", gap: 16, borderLeft: "1px solid rgba(255,255,255,0.06)", paddingLeft: 20 }}>
+
+          {/* Ajanseuranta */}
+          <div>
+            <div className="label" style={{ marginBottom: ttTotal > 0 ? 8 : 4 }}>Ajanseuranta</div>
+            {ttTotal === 0 ? (
+              <div style={{ fontSize: 11, color: "#4a5a4a" }}>Ei kirjauksia tänään</div>
+            ) : (
+              <>
+                {CATEGORIES.map(cat => {
+                  const ms = ttToday[cat] || 0;
+                  if (!ms) return null;
+                  return (
+                    <div key={cat} style={{ marginBottom: 5 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 2 }}>
+                        <span style={{ fontSize: 9, color: CAT_COLORS[cat] }}>{cat}</span>
+                        <span style={{ fontSize: 9, color: "#7a8a7a" }}>{fmtMs(ms)}</span>
+                      </div>
+                      <div style={{ height: 3, background: "rgba(255,255,255,0.06)", borderRadius: 2 }}>
+                        <div style={{ width: `${Math.min((ms / Math.max(ttTotal, 1)) * 100, 100)}%`, height: "100%", background: CAT_COLORS[cat], borderRadius: 2, opacity: 0.85 }} />
+                      </div>
+                    </div>
+                  );
+                })}
+                <div style={{ fontSize: 9, color: "#5a6a5a", marginTop: 2 }}>Yhteensä {fmtMs(ttTotal)}</div>
+              </>
+            )}
+          </div>
+
+          {/* Weekly goals */}
+          {weeklyGoals.length > 0 && (
+            <div>
+              <div className="label" style={{ marginBottom: 6 }}>Viikon tavoitteet</div>
+              {weeklyGoals.slice(0, 5).map(g => (
+                <div key={g.id} style={{ display: "flex", gap: 6, alignItems: "flex-start", padding: "3px 0" }}>
+                  <div style={{ width: 10, height: 10, borderRadius: 2, border: `1px solid ${g.done ? "#6ee7b7" : "#3a4a3a"}`, background: g.done ? "rgba(110,231,183,0.2)" : "transparent", flexShrink: 0, marginTop: 2 }} />
+                  <span style={{ fontSize: 11, color: g.done ? "#3a4a3a" : "#9a9a9a", textDecoration: g.done ? "line-through" : "none" }}>{g.title}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Deadlines */}
+          {upcomingDeadlines.length > 0 && (
+            <div>
+              <div className="label" style={{ marginBottom: 6 }}>Deadlinet</div>
+              {upcomingDeadlines.map(c => (
+                <div key={c.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 0", borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
+                  <span style={{ fontSize: 11, color: "#c4c4c4", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</span>
+                  <span style={{ fontSize: 10, fontWeight: 500, marginLeft: 8, flexShrink: 0, color: c.daysLeft <= 2 ? "#f87171" : "#fbbf24", animation: c.daysLeft === 0 ? "pulse 1.5s ease-in-out infinite" : "none" }}>
+                    {c.daysLeft === 0 ? "tänään!" : `${c.daysLeft} pv`}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Forest reminder */}
+          <div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+              <div className="label" style={{ marginBottom: 0 }}>🌲 Metsä</div>
+              <button className="btn-ghost" onClick={() => setForestEditMode(m => !m)} style={{ fontSize: 9 }}>
+                {forestEditMode ? "✓ Valmis" : "✎"}
+              </button>
+            </div>
+            {forestEditMode ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                {Array.from({ length: 12 }, (_, i) => i + 1).map(m => (
+                  <div key={m} style={{ display: "flex", gap: 5, alignItems: "center" }}>
+                    <span style={{ fontSize: 9, color: "#5a6a5a", width: 16, flexShrink: 0, textAlign: "right" }}>{m}.</span>
+                    <input type="text" value={forestReminders[m] || ""} onChange={e => setForestReminders(r => ({ ...r, [m]: e.target.value }))} style={{ flex: 1, fontSize: 10 }} />
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div style={{ fontSize: 11, color: "#a8c4a8", lineHeight: 1.5 }}>{forestReminder}</div>
+            )}
+          </div>
+
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Forest Reminders hook ─────────────────────────────────────────────────────
 
 const FR_KEY = "forestReminders";
@@ -773,6 +1064,13 @@ function useForestReminders() {
 }
 
 // ── Studies & Projects card ───────────────────────────────────────────────────
+
+function deadlineDays(dateStr) {
+  if (!dateStr) return null;
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const dl    = new Date(dateStr); dl.setHours(0, 0, 0, 0);
+  return Math.round((dl - today) / 86400000);
+}
 
 const SP_KEY = "studiesProjects";
 const SP_DEFAULTS = {
@@ -842,7 +1140,17 @@ function StudiesProjectsCard() {
       {data.courses.map(c => (
         <div key={c.id} style={{ padding: "8px 10px", background: "rgba(110,231,183,0.06)", border: "1px solid rgba(110,231,183,0.12)", borderRadius: 2, marginBottom: 6 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-            <div style={{ fontSize: 13, color: "#e8e8e8", flex: 1 }}>{c.name}</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, flex: 1, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 13, color: "#e8e8e8" }}>{c.name}</span>
+              {(() => {
+                const d = deadlineDays(c.deadline);
+                if (d == null || d < 0) return null;
+                if (d === 0) return <span style={{ fontSize: 9, color: "#f87171", letterSpacing: "0.05em", animation: "pulse 1.5s ease-in-out infinite" }}>TÄNÄÄN</span>;
+                if (d <= 2)  return <span style={{ fontSize: 9, color: "#f87171" }}>{d} pv</span>;
+                if (d <= 7)  return <span style={{ fontSize: 9, color: "#fbbf24" }}>{d} pv</span>;
+                return null;
+              })()}
+            </div>
             {editMode && <button className="btn-ghost" onClick={() => removeCourse(c.id)} style={{ fontSize: 9, padding: "1px 5px", marginLeft: 6 }}>✕</button>}
           </div>
           {c.description && <div style={{ fontSize: 11, color: "#7a8a7a", marginTop: 2 }}>{c.description}</div>}
@@ -1178,20 +1486,25 @@ export default function App() {
 }
 
 function MorningDashboard({ onLogout }) {
-  const [now, setNow] = useState(new Date());
+  const [now, setNow]           = useState(new Date());
+  const weatherState            = useWeather();
+  const electricityState        = useElectricity();
   const [weekPlan, setWeekPlan] = useState(() => {
     try { return JSON.parse(localStorage.getItem("weekPlan")) || INITIAL_WEEK; } catch { return INITIAL_WEEK; }
+  });
+  const [recurringEvents, setRecurringEvents] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("recurringEvents")) || INITIAL_WEEK; } catch { return INITIAL_WEEK; }
   });
   const [maintenance, setMaintenance] = useState(() => {
     try { return JSON.parse(localStorage.getItem("maintenance")) || MOCK_MAINTENANCE; } catch { return MOCK_MAINTENANCE; }
   });
-  const [editMode, setEditMode] = useState(false);
-  const [editDay, setEditDay] = useState(null);
-  const [newEventTime, setNewEventTime] = useState("");
-  const [newEventTitle, setNewEventTitle] = useState("");
-  const [newTask, setNewTask] = useState("");
+  const [editMode, setEditMode]               = useState(false);
+  const [editDay, setEditDay]                 = useState(null);
+  const [newEventTime, setNewEventTime]       = useState("");
+  const [newEventTitle, setNewEventTitle]     = useState("");
+  const [newEventRecurring, setNewEventRecurring] = useState(false);
+  const [newTask, setNewTask]                 = useState("");
   const [forestReminders, setForestReminders] = useForestReminders();
-  const [forestEditMode, setForestEditMode]   = useState(false);
 
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 30000);
@@ -1203,29 +1516,39 @@ function MorningDashboard({ onLogout }) {
   }, [weekPlan]);
 
   useEffect(() => {
+    localStorage.setItem("recurringEvents", JSON.stringify(recurringEvents));
+  }, [recurringEvents]);
+
+  useEffect(() => {
     localStorage.setItem("maintenance", JSON.stringify(maintenance));
   }, [maintenance]);
 
-  const dayIndex = (now.getDay() + 6) % 7;
+  const dayIndex  = (now.getDay() + 6) % 7;
   const todayName = DAYS[dayIndex];
-  const todayEvents = weekPlan[todayName] || [];
-  const month = now.getMonth() + 1;
-  const forestReminder = forestReminders[month] || FOREST_REMINDERS[month];
+
   const addEvent = (day) => {
     if (!newEventTime || !newEventTitle) return;
-    const updated = {
-      ...weekPlan,
-      [day]: [...(weekPlan[day] || []), { time: newEventTime, title: newEventTitle }]
-        .sort((a, b) => a.time.localeCompare(b.time))
-    };
-    setWeekPlan(updated);
-    setNewEventTime("");
-    setNewEventTitle("");
+    const ev = { time: newEventTime, title: newEventTitle };
+    if (newEventRecurring) {
+      setRecurringEvents(prev => ({
+        ...prev,
+        [day]: [...(prev[day] || []), ev].sort((a, b) => a.time.localeCompare(b.time)),
+      }));
+    } else {
+      setWeekPlan(prev => ({
+        ...prev,
+        [day]: [...(prev[day] || []), ev].sort((a, b) => a.time.localeCompare(b.time)),
+      }));
+    }
+    setNewEventTime(""); setNewEventTitle(""); setNewEventRecurring(false);
   };
 
-  const removeEvent = (day, idx) => {
-    const updated = { ...weekPlan, [day]: weekPlan[day].filter((_, i) => i !== idx) };
-    setWeekPlan(updated);
+  const removeEvent = (day, idx, isRecurring = false) => {
+    if (isRecurring) {
+      setRecurringEvents(prev => ({ ...prev, [day]: (prev[day] || []).filter((_, i) => i !== idx) }));
+    } else {
+      setWeekPlan(prev => ({ ...prev, [day]: (prev[day] || []).filter((_, i) => i !== idx) }));
+    }
   };
 
   const toggleMaintenance = (id) => {
@@ -1283,6 +1606,7 @@ function MorningDashboard({ onLogout }) {
         .btn-ghost:hover { border-color: #f87171; color: #f87171; }
         .bar { height: 28px; border-radius: 1px; display: inline-block; vertical-align: bottom; transition: opacity 0.2s; }
         .bar:hover { opacity: 0.7; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
       `}</style>
 
       {/* Header */}
@@ -1305,45 +1629,24 @@ function MorningDashboard({ onLogout }) {
       <div style={{ padding: "24px 32px", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 16 }}>
 
         {/* TODAY */}
-        <div className="card" style={{ gridColumn: "span 1" }}>
-          <div className="label">Tänään — {todayName}</div>
-          {todayEvents.length === 0 ? (
-            <div style={{ color: "#5a6a5a", fontSize: 12, padding: "8px 0" }}>Ei merkintöjä tänään</div>
-          ) : (
-            todayEvents.map((e, i) => (
-              <div className="event-row" key={i}>
-                <span className="event-time">{e.time}</span>
-                <span className="event-title">{e.title}</span>
-              </div>
-            ))
-          )}
-          <div style={{ marginTop: 14, paddingTop: 12, borderTop: "1px solid rgba(255,255,255,0.06)" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-              <div className="label" style={{ marginBottom: 0 }}>🌲 Metsämuistutus</div>
-              <button className="btn-ghost" onClick={() => setForestEditMode(m => !m)} style={{ fontSize: 9 }}>
-                {forestEditMode ? "✓ Valmis" : "✎"}
-              </button>
-            </div>
-            {forestEditMode ? (
-              <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-                {Array.from({ length: 12 }, (_, i) => i + 1).map(m => (
-                  <div key={m} style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                    <span style={{ fontSize: 10, color: "#5a6a5a", width: 18, flexShrink: 0, textAlign: "right" }}>{m}.</span>
-                    <input type="text" value={forestReminders[m] || ""} onChange={e => setForestReminders(r => ({ ...r, [m]: e.target.value }))} style={{ flex: 1, fontSize: 11 }} />
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div style={{ fontSize: 12, color: "#a8c4a8", lineHeight: 1.5 }}>{forestReminder}</div>
-            )}
-          </div>
-        </div>
+        <TodayWidget
+          weatherState={weatherState}
+          electricityState={electricityState}
+          weekPlan={weekPlan}
+          setWeekPlan={setWeekPlan}
+          recurringEvents={recurringEvents}
+          setRecurringEvents={setRecurringEvents}
+          todayName={todayName}
+          now={now}
+          forestReminders={forestReminders}
+          setForestReminders={setForestReminders}
+        />
 
         {/* ELECTRICITY */}
-        <ElectricityCard />
+        <ElectricityCard {...electricityState} />
 
         {/* WEATHER */}
-        <WeatherCard />
+        <WeatherCard {...weatherState} />
 
         {/* LEVI BOOKINGS */}
         <div className="card">
@@ -1405,20 +1708,24 @@ function MorningDashboard({ onLogout }) {
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 10, overflowX: "auto" }}>
             {DAYS.map((day, i) => {
-              const isToday = i === dayIndex;
-              const events = weekPlan[day] || [];
+              const isToday   = i === dayIndex;
+              const allEvents = [
+                ...(weekPlan[day]        || []).map((e, idx) => ({ ...e, _idx: idx, _recurring: false })),
+                ...(recurringEvents[day] || []).map((e, idx) => ({ ...e, _idx: idx, _recurring: true  })),
+              ].sort((a, b) => a.time.localeCompare(b.time));
               return (
                 <div className="day-col" key={day}>
                   <div className={`day-header${isToday ? " today" : ""}`}>
                     <span style={{ display: "block" }}>{DAYS_SHORT[i]}</span>
                   </div>
-                  {events.map((e, ei) => (
+                  {allEvents.map((e, ei) => (
                     <div key={ei} className="mini-event" style={{ display: "flex", alignItems: "center", gap: 2 }}>
                       <span className="t">{e.time}</span>
                       <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis" }}>{e.title}</span>
+                      {e._recurring && <span style={{ fontSize: 8, color: "#4a5a4a" }}>🔁</span>}
                       {editMode && (
                         <button className="btn-ghost" style={{ padding: "1px 5px", fontSize: 9, marginLeft: 2 }}
-                          onClick={() => removeEvent(day, ei)}>×</button>
+                          onClick={() => removeEvent(day, e._idx, e._recurring)}>×</button>
                       )}
                     </div>
                   ))}
@@ -1428,9 +1735,13 @@ function MorningDashboard({ onLogout }) {
                       <input type="text" value={newEventTitle} onChange={e => setNewEventTitle(e.target.value)}
                         placeholder="Tapahtuma" style={{ width: "100%" }}
                         onKeyDown={e => { if (e.key === "Enter") { addEvent(day); setEditDay(null); } }} />
+                      <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 9, color: "#7a8a7a", cursor: "pointer" }}>
+                        <input type="checkbox" checked={newEventRecurring} onChange={e => setNewEventRecurring(e.target.checked)} style={{ accentColor: "#6ee7b7" }} />
+                        🔁 Toistuva
+                      </label>
                       <div style={{ display: "flex", gap: 4 }}>
                         <button className="btn" style={{ flex: 1 }} onClick={() => { addEvent(day); setEditDay(null); }}>+</button>
-                        <button className="btn-ghost" onClick={() => setEditDay(null)}>✕</button>
+                        <button className="btn-ghost" onClick={() => { setEditDay(null); setNewEventRecurring(false); }}>✕</button>
                       </div>
                     </div>
                   )}
@@ -1447,7 +1758,7 @@ function MorningDashboard({ onLogout }) {
 
       {/* Footer */}
       <div style={{ padding: "0 32px 20px", display: "flex", justifyContent: "space-between", fontSize: 10, color: "#2a3a2a", letterSpacing: "0.1em" }}>
-        <span>MORNING DASHBOARD v0.3</span>
+        <span>MORNING DASHBOARD v0.4</span>
         <span>SÄÄ: OPEN-METEO · SÄHKÖ: SPOT-HINTA.FI</span>
       </div>
     </div>
