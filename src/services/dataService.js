@@ -12,21 +12,12 @@ const supabase =
 
 // ── Device identity ───────────────────────────────────────────────────────────
 
-const DEVICE_KEY = '_dashboard_uid';
+const USER_ID = 'c2bf189d-7047-499d-9db8-2947e4afc0bc';
 
-function getUserId() {
-  let id = localStorage.getItem(DEVICE_KEY);
-  if (!id) {
-    id = typeof crypto?.randomUUID === 'function'
-      ? crypto.randomUUID()
-      : Math.random().toString(36).slice(2) + Date.now().toString(36);
-    localStorage.setItem(DEVICE_KEY, id);
-  }
-  return id;
-}
+const getUserId = () => USER_ID;
 
 // Keys that must never sync to Supabase (device-specific state)
-const NO_SYNC = new Set(['dashboard_auth', '_dashboard_uid']);
+const NO_SYNC = new Set(['dashboard_auth']);
 
 // ── Sync status ───────────────────────────────────────────────────────────────
 
