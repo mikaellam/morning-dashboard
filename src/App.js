@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback } from "react";
 import { getEventsForToday } from './services/calendarService';
 import WeeklyReviewOverlay from './WeeklyReviewOverlay';
+import TodoWidget, { TODO_KEY } from './TodoWidget';
+import IdeasWidget from './IdeasWidget';
 import * as dataService from './services/dataService';
 
 // Hook: re-reads key from localStorage when a 'dashboard:sync' event arrives for it.
@@ -821,9 +823,10 @@ const ENERGY_OPTS = [
   { value: "high",   fi: "Korkea", color: "#4ade80" },
 ];
 const SOURCE_BADGE = {
-  manual:  { bg: "rgba(255,255,255,0.04)", color: "#4a5a4a",  label: "oma" },
-  outlook: { bg: "rgba(96,165,250,0.08)",  color: "#60a5fa",  label: "outlook" },
-  apple:   { bg: "rgba(209,213,219,0.06)", color: "#9ca3af",  label: "apple" },
+  manual:  { bg: "rgba(255,255,255,0.04)",   color: "#4a5a4a",  label: "oma" },
+  outlook: { bg: "rgba(96,165,250,0.08)",    color: "#60a5fa",  label: "outlook" },
+  apple:   { bg: "rgba(209,213,219,0.06)",   color: "#9ca3af",  label: "apple" },
+  todo:    { bg: "rgba(110,231,183,0.06)",   color: "#6ee7b7",  label: "tehtävä" },
 };
 
 function TodayWidget({ weatherState, electricityState, weekPlan, setWeekPlan, recurringEvents, setRecurringEvents, todayName, now }) {
@@ -849,7 +852,28 @@ function TodayWidget({ weatherState, electricityState, weekPlan, setWeekPlan, re
   const setEnergy   = (v) => setEnergyMap(m => ({ ...m, [todayStr]: m[todayStr] === v ? null : v }));
   const forestReminder = FOREST_REMINDERS[month];
 
-  const events  = getEventsForToday(weekPlan, recurringEvents, todayName);
+  // Merge timed todo tasks into the timeline
+  const todoTimelineEvents = (() => {
+    try {
+      const s = JSON.parse(localStorage.getItem(TODO_KEY));
+      if (!s || !s.tasks) return [];
+      return s.tasks
+        .filter(t => !t.done && t.dueTime && (!t.dueDate || t.dueDate === todayStr))
+        .map(t => ({
+          id:        `todo-${t.id}`,
+          time:      t.dueTime,
+          title:     t.title,
+          source:    'todo',
+          duration:  null,
+          category:  t.category || null,
+          recurring: false,
+        }));
+    } catch { return []; }
+  })();
+  const events  = [
+    ...getEventsForToday(weekPlan, recurringEvents, todayName),
+    ...todoTimelineEvents,
+  ].sort((a, b) => (a.time || "").localeCompare(b.time || ""));
   const nowMins = now.getHours() * 60 + now.getMinutes();
   const evMins  = (e) => { const [h, m] = (e.time || "0:0").split(":").map(Number); return h * 60 + m; };
   const nextEv  = events.find(e => evMins(e) > nowMins) || null;
@@ -1422,6 +1446,29 @@ function WeeklyGoalsWidget() {
     setNewTitle(""); setNewCat("");
   };
 
+  // Add a weekly goal as a task in the TodoWidget
+  const [recentlyAdded, setRecentlyAdded] = useState({});
+  const addGoalAsTask = (goal) => {
+    try {
+      const raw = localStorage.getItem(TODO_KEY);
+      const s   = raw ? JSON.parse(raw) : { tasks: [] };
+      const newTask = {
+        id:       Date.now(),
+        title:    goal.title,
+        dueTime:  null,
+        dueDate:  fiStr(),
+        category: goal.category || "",
+        done:     false,
+        order:    (s.tasks || []).length,
+      };
+      const updated = { ...s, tasks: [...(s.tasks || []), newTask] };
+      dataService.save(TODO_KEY, updated);
+      window.dispatchEvent(new CustomEvent('dashboard:sync', { detail: { key: TODO_KEY } }));
+      setRecentlyAdded(m => ({ ...m, [goal.id]: true }));
+      setTimeout(() => setRecentlyAdded(m => { const n = { ...m }; delete n[goal.id]; return n; }), 2500);
+    } catch {}
+  };
+
   return (
     <div className="card">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
@@ -1487,6 +1534,21 @@ function WeeklyGoalsWidget() {
                 {g.title}
               </span>
               {g.category && <span style={{ fontSize: 9, color: "#4a5a4a", flexShrink: 0 }}>[{g.category}]</span>}
+              {!editMode && !g.done && (
+                <button
+                  className="btn-ghost"
+                  onClick={() => addGoalAsTask(g)}
+                  style={{
+                    fontSize: 8, padding: "1px 6px", flexShrink: 0,
+                    color:       recentlyAdded[g.id] ? "#6ee7b7" : "#5a6a5a",
+                    borderColor: recentlyAdded[g.id] ? "rgba(110,231,183,0.35)" : "rgba(255,255,255,0.08)",
+                    transition: "all 0.3s",
+                  }}
+                  title="Lisää tehtävälistaan"
+                >
+                  {recentlyAdded[g.id] ? "✓ Lisätty" : "→ Tehtäväksi"}
+                </button>
+              )}
               {editMode && <button className="btn-ghost" onClick={() => removeGoal(g.id)} style={{ fontSize: 9, padding: "1px 5px" }}>✕</button>}
             </div>
           ))}
@@ -1984,6 +2046,12 @@ function MorningDashboard({ onLogout }) {
 
         {/* WEEKLY GOALS */}
         <WeeklyGoalsWidget />
+
+        {/* TO-DO LIST */}
+        <TodoWidget />
+
+        {/* IDEAS & CREATIVITY */}
+        <IdeasWidget />
 
       </div>
 

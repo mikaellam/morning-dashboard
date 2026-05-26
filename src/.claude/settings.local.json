@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git config *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git branch *)",
+      "Bash(gh repo *)",
+      "Bash(git add *)",
+      "Bash(git push *)",
+      "Bash(npm start *)",
+      "Bash(npx react-scripts *)",
+      "Bash(npm run *)",
+      "Bash(npm install *)",
+      "Bash(node -e \"require\\('@supabase/supabase-js'\\); console.log\\('ok'\\)\")",
+      "Bash(node *)"
+    ]
+  }
+}
