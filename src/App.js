@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { getEventsForToday } from './services/calendarService';
 import WeeklyReviewOverlay from './WeeklyReviewOverlay';
 import TodoWidget, { TODO_KEY } from './TodoWidget';
@@ -844,6 +844,14 @@ function TodayWidget({ weatherState, electricityState, weekPlan, setWeekPlan, re
   useEffect(() => {
     const t = setInterval(() => setTick(n => n + 1), 30000);
     return () => clearInterval(t);
+  }, []);
+
+  // Re-render immediately when the todo list is saved (so timed tasks
+  // appear in the timeline without waiting for the 30 s clock tick).
+  useEffect(() => {
+    const h = (e) => { if (e.detail?.key === TODO_KEY) setTick(n => n + 1); };
+    window.addEventListener('dashboard:sync', h);
+    return () => window.removeEventListener('dashboard:sync', h);
   }, []);
 
   const todayStr    = fiStr();
@@ -1834,13 +1842,21 @@ function MorningDashboard({ onLogout }) {
   const [newEventTitle, setNewEventTitle]     = useState("");
   const [newEventRecurring, setNewEventRecurring] = useState(false);
 
+  // Skip the very first save so that a fresh session (empty localStorage)
+  // cannot overwrite real Supabase data with INITIAL_WEEK during the ~800 ms
+  // window before dataService.init() finishes loading.
+  const initDoneRef = useRef(false);
+
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 30000);
     return () => clearInterval(t);
   }, []);
 
   useEffect(() => {
-    dataService.init().finally(() => setDataReady(true));
+    dataService.init().finally(() => {
+      initDoneRef.current = true;
+      setDataReady(true);
+    });
   }, []);
 
   useEffect(() => {
@@ -1848,10 +1864,12 @@ function MorningDashboard({ onLogout }) {
   }, []);
 
   useEffect(() => {
+    if (!initDoneRef.current) return;
     dataService.save("weekPlan", weekPlan);
   }, [weekPlan]);
 
   useEffect(() => {
+    if (!initDoneRef.current) return;
     dataService.save("recurringEvents", recurringEvents);
   }, [recurringEvents]);
 

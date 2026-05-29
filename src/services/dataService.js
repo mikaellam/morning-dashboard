@@ -150,6 +150,14 @@ export async function init() {
     debugInfo.keysLoaded = remoteKeys.size;
     debugInfo.lastReadAt = new Date().toISOString();
 
+    // Notify all useDataSync listeners so React state updates from the
+    // freshly-loaded Supabase values.  Without this, components keep
+    // whatever was in localStorage at mount time (potentially stale or
+    // empty) until the next realtime push.
+    for (const key of remoteKeys) {
+      window.dispatchEvent(new CustomEvent('dashboard:sync', { detail: { key } }));
+    }
+
     // Migrate local-only keys
     const toMigrate = [];
     for (const lsKey of Object.keys(localStorage)) {
