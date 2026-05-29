@@ -95,7 +95,7 @@ function Sec({ children }) {
   );
 }
 
-export default function WeeklyReviewOverlay({ onClose, now }) {
+export default function WeeklyReviewOverlay({ onClose, now, gcEvents = {} }) {
   const { year: ty, week: tw } = getISOWeek(now);
   const { year: ny, week: nw } = shiftWeek(ty, tw, 1);
   const { year: py, week: pw } = shiftWeek(ty, tw, -1);
@@ -549,26 +549,39 @@ export default function WeeklyReviewOverlay({ onClose, now }) {
               <Sec>Kalenteri — ensi viikko</Sec>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 8 }}>
                 {nextWeekDates.slice(0, 5).map((date, i) => {
-                  const dayName = DAYS_FI[i];
-                  const events = wpStore[dayName] || [];
+                  const dayName   = DAYS_FI[i];
+                  const manEvents = wpStore[dayName] || [];
+                  const dateStr   = fiStr(date);
+                  const gcDayEvs  = (gcEvents[dateStr] || []).filter(e => e.time);
                   const dateLabel = date.toLocaleDateString("fi-FI", { day: "numeric", month: "numeric" });
+                  const hasAny    = manEvents.length > 0 || gcDayEvs.length > 0;
                   return (
                     <div key={i} style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 2, padding: "10px 10px", minHeight: 80 }}>
                       <div style={{ fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase", color: "#4a5a4a", marginBottom: 7 }}>
                         {DAYS_FI[i].slice(0, 2)} · {dateLabel}
                       </div>
-                      {events.length === 0 ? (
+                      {!hasAny ? (
                         <div style={{ fontSize: 10, color: "#2a3a2a" }}>—</div>
-                      ) : events.map((ev, ei) => (
-                        <div key={ei} style={{ fontSize: 10, color: "#7a8a7a", padding: "2px 0", borderBottom: "1px solid rgba(255,255,255,0.03)" }}>
-                          <span style={{ color: "#6ee7b7", marginRight: 4 }}>{ev.time}</span>{ev.title}
-                        </div>
-                      ))}
+                      ) : (
+                        <>
+                          {manEvents.map((ev, ei) => (
+                            <div key={`m-${ei}`} style={{ fontSize: 10, color: "#7a8a7a", padding: "2px 0", borderBottom: "1px solid rgba(255,255,255,0.03)" }}>
+                              <span style={{ color: "#6ee7b7", marginRight: 4 }}>{ev.time}</span>{ev.title}
+                            </div>
+                          ))}
+                          {gcDayEvs.map((ev, ei) => (
+                            <div key={`gc-${ei}`} title={ev.calendarName || ''} style={{ fontSize: 10, color: "#6a7a8a", padding: "2px 0", borderBottom: "1px solid rgba(255,255,255,0.03)", display: "flex", alignItems: "center", gap: 3 }}>
+                              <span style={{ display: "inline-block", width: 5, height: 5, borderRadius: "50%", background: ev.calendarColor || '#4285f4', flexShrink: 0 }} />
+                              <span style={{ color: ev.calendarColor || '#4285f4', marginRight: 3 }}>{ev.time}</span>
+                              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ev.title}</span>
+                            </div>
+                          ))}
+                        </>
+                      )}
                     </div>
                   );
                 })}
               </div>
-              <div style={{ fontSize: 9, color: "#3a4a3a", marginTop: 8 }}>Outlook & Apple kalenteri lisätään myöhemmin</div>
             </section>
 
             {/* Levi billing reminder */}

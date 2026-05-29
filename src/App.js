@@ -4,6 +4,7 @@ import WeeklyReviewOverlay from './WeeklyReviewOverlay';
 import TodoWidget, { TODO_KEY } from './TodoWidget';
 import IdeasWidget from './IdeasWidget';
 import * as dataService from './services/dataService';
+import * as gcService from './services/googleCalendarService';
 
 // Hook: re-reads key from localStorage when a 'dashboard:sync' event arrives for it.
 // setState from useState is guaranteed stable, so the empty dep array is intentional.
@@ -17,6 +18,136 @@ function useDataSync(key, setState) {
     window.addEventListener('dashboard:sync', h);
     return () => window.removeEventListener('dashboard:sync', h);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+}
+
+// ── Google Calendar hook ───────────────────────────────────────────────────────
+function useGoogleCalendar() {
+  const [auth, setAuth]         = useState(() => gcService.loadAuth());
+  const [settings, setSettings] = useState(() => gcService.loadSettings());
+  const [gcEvents, setGcEvents] = useState({});
+  const [status, setStatus]     = useState('idle'); // idle|connecting|fetching|ready|error|auth_needed
+  const [error, setError]       = useState(null);
+
+  // Fetch events using the given accessToken + settings object
+  const fetchEventsNow = useCallback(async (accessToken, settingsObj) => {
+    const enabledCals = (settingsObj.calendars || []).filter(c => c.enabled);
+    if (enabledCals.length === 0) { setStatus('ready'); return; }
+    setStatus('fetching');
+    try {
+      const events = await gcService.fetchAllEvents(accessToken, enabledCals);
+      setGcEvents(events);
+      setStatus('ready');
+    } catch (err) {
+      if (err.status === 401) {
+        setStatus('auth_needed');
+        gcService.clearAuth();
+        setAuth(null);
+      } else {
+        setStatus('error');
+        setError(err.message || 'Tapahtumahaku epäonnistui');
+      }
+    }
+  }, []);
+
+  // On mount: if we have a stored token, start fetching; otherwise try silent refresh
+  useEffect(() => {
+    const stored = gcService.loadAuth();
+    if (!stored) { setStatus('idle'); return; }
+    if (gcService.isTokenValid(stored)) {
+      setAuth(stored);
+      fetchEventsNow(stored.accessToken, gcService.loadSettings());
+    } else {
+      setStatus('connecting');
+      gcService.requestAccessToken({ prompt: '' })
+        .then(newAuth => {
+          gcService.saveAuth(newAuth);
+          setAuth(newAuth);
+          return fetchEventsNow(newAuth.accessToken, gcService.loadSettings());
+        })
+        .catch(() => { setStatus('auth_needed'); });
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Cross-device sync: react when another device saves auth or settings
+  useEffect(() => {
+    const h = (e) => {
+      const key = e.detail?.key;
+      if (key === gcService.GC_AUTH_KEY) setAuth(gcService.loadAuth());
+      if (key === gcService.GC_SETTINGS_KEY) setSettings(gcService.loadSettings());
+    };
+    window.addEventListener('dashboard:sync', h);
+    return () => window.removeEventListener('dashboard:sync', h);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const gcConnect = useCallback(async () => {
+    setStatus('connecting');
+    setError(null);
+    try {
+      const newAuth = await gcService.requestAccessToken({ prompt: 'consent' });
+      gcService.saveAuth(newAuth);
+      setAuth(newAuth);
+
+      setStatus('fetching');
+      const calendars = await gcService.fetchCalendars(newAuth.accessToken);
+      const newSettings = { calendars: calendars.map(c => ({ ...c, enabled: true })) };
+      gcService.saveSettings(newSettings);
+      setSettings(newSettings);
+
+      await fetchEventsNow(newAuth.accessToken, newSettings);
+    } catch (err) {
+      if (err.message !== 'Token request cancelled') {
+        setStatus('error');
+        setError(err.message || 'Yhdistäminen epäonnistui');
+      } else {
+        setStatus('idle');
+      }
+    }
+  }, [fetchEventsNow]);
+
+  const gcDisconnect = useCallback(() => {
+    if (auth?.accessToken) gcService.revokeToken(auth.accessToken);
+    gcService.clearAuth();
+    setAuth(null);
+    setGcEvents({});
+    setSettings({ calendars: [] });
+    setStatus('idle');
+    setError(null);
+  }, [auth]);
+
+  const gcToggleCalendar = useCallback((id) => {
+    setSettings(prev => {
+      const newSettings = {
+        ...prev,
+        calendars: (prev.calendars || []).map(c => c.id === id ? { ...c, enabled: !c.enabled } : c),
+      };
+      gcService.saveSettings(newSettings);
+      const currentAuth = gcService.loadAuth();
+      if (currentAuth && gcService.isTokenValid(currentAuth)) {
+        fetchEventsNow(currentAuth.accessToken, newSettings);
+      }
+      return newSettings;
+    });
+  }, [fetchEventsNow]);
+
+  const gcRefresh = useCallback(async () => {
+    const currentAuth = gcService.loadAuth();
+    if (!currentAuth) return;
+    if (gcService.isTokenValid(currentAuth)) {
+      await fetchEventsNow(currentAuth.accessToken, gcService.loadSettings());
+    } else {
+      setStatus('connecting');
+      try {
+        const newAuth = await gcService.requestAccessToken({ prompt: '' });
+        gcService.saveAuth(newAuth);
+        setAuth(newAuth);
+        await fetchEventsNow(newAuth.accessToken, gcService.loadSettings());
+      } catch {
+        setStatus('auth_needed');
+      }
+    }
+  }, [fetchEventsNow]);
+
+  return { auth, settings, gcEvents, status, error, gcConnect, gcDisconnect, gcToggleCalendar, gcRefresh };
 }
 
 function SyncDot({ onRefresh }) {
@@ -827,9 +958,10 @@ const SOURCE_BADGE = {
   outlook: { bg: "rgba(96,165,250,0.08)",    color: "#60a5fa",  label: "outlook" },
   apple:   { bg: "rgba(209,213,219,0.06)",   color: "#9ca3af",  label: "apple" },
   todo:    { bg: "rgba(110,231,183,0.06)",   color: "#6ee7b7",  label: "tehtävä" },
+  google:  { bg: "rgba(66,133,244,0.08)",    color: "#4285f4",  label: "google" },
 };
 
-function TodayWidget({ weatherState, electricityState, weekPlan, setWeekPlan, recurringEvents, setRecurringEvents, todayName, now }) {
+function TodayWidget({ weatherState, electricityState, weekPlan, setWeekPlan, recurringEvents, setRecurringEvents, todayName, now, gcEvents }) {
   const [energyMap, setEnergyMap]   = useState(() => {
     try { return JSON.parse(localStorage.getItem(EL_KEY)) || {}; } catch { return {}; }
   });
@@ -879,7 +1011,7 @@ function TodayWidget({ weatherState, electricityState, weekPlan, setWeekPlan, re
     } catch { return []; }
   })();
   const events  = [
-    ...getEventsForToday(weekPlan, recurringEvents, todayName),
+    ...getEventsForToday(weekPlan, recurringEvents, todayName, gcEvents || {}, todayStr),
     ...todoTimelineEvents,
   ].sort((a, b) => (a.time || "").localeCompare(b.time || ""));
   const nowMins = now.getHours() * 60 + now.getMinutes();
@@ -1026,7 +1158,7 @@ function TodayWidget({ weatherState, electricityState, weekPlan, setWeekPlan, re
                       borderBottom: "1px solid rgba(255,255,255,0.04)",
                       background: isNext ? "rgba(110,231,183,0.03)" : "transparent",
                     }}>
-                      <div style={{ width: 3, height: 28, borderRadius: 2, flexShrink: 0, background: isPast ? "rgba(255,255,255,0.08)" : isNext ? "#6ee7b7" : "rgba(110,231,183,0.4)" }} />
+                      <div style={{ width: 3, height: 28, borderRadius: 2, flexShrink: 0, background: isPast ? "rgba(255,255,255,0.08)" : isNext ? (ev.color || "#6ee7b7") : `${(ev.color || "#6ee7b7")}99` }} />
                       <span style={{ fontSize: 11, color: isPast ? "#3a4a3a" : "#6ee7b7", minWidth: 36, fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>{ev.time}</span>
                       <span style={{ fontSize: 13, color: isPast ? "#4a5a4a" : isNext ? "#f0f0f0" : "#c4c4c4", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", textDecoration: isPast ? "line-through" : "none" }}>
                         {ev.title}
@@ -1822,6 +1954,103 @@ export default function App() {
   );
 }
 
+// ── Google Calendar Settings Card ────────────────────────────────────────────
+function GoogleCalendarSettingsCard({ auth, settings, status, error, gcConnect, gcDisconnect, gcToggleCalendar, gcRefresh }) {
+  const isConnected = !!(auth && gcService.isTokenValid(auth));
+  const calendars   = settings.calendars || [];
+  const busy        = status === 'connecting' || status === 'fetching';
+
+  const dotColor = status === 'ready'      ? '#6ee7b7'
+                 : busy                    ? '#fbbf24'
+                 : status === 'error' || status === 'auth_needed' ? '#f87171'
+                 :                           '#3a4a3a';
+
+  return (
+    <div className="card">
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+        <div className="label" style={{ marginBottom: 0 }}>Google Kalenteri</div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={{ width: 6, height: 6, borderRadius: "50%", background: dotColor, animation: busy ? "pulse 1s ease-in-out infinite" : "none" }} />
+          {isConnected && !busy && (
+            <button className="btn-ghost" onClick={gcRefresh} style={{ fontSize: 9, padding: "1px 7px" }}>↻ Päivitä</button>
+          )}
+        </div>
+      </div>
+
+      {!isConnected ? (
+        <div>
+          <div style={{ fontSize: 11, color: "#5a6a5a", marginBottom: 10, lineHeight: 1.6 }}>
+            {status === 'auth_needed' ? 'Kirjautuminen vanhentunut — yhdistä uudelleen.'
+           : status === 'error'       ? `Virhe: ${error}`
+           : status === 'connecting'  ? 'Yhdistetään...'
+           : 'Yhdistä Google-kalenteri nähdäksesi tapahtumat aikajanalla ja viikkosuunnitelmassa.'}
+          </div>
+          <button
+            className="btn"
+            onClick={gcConnect}
+            disabled={busy}
+            style={{ width: "100%", opacity: busy ? 0.6 : 1, cursor: busy ? "default" : "pointer" }}
+          >
+            {busy ? '…' : '+ Yhdistä Google'}
+          </button>
+        </div>
+      ) : (
+        <div>
+          {status === 'fetching' && (
+            <div style={{ fontSize: 10, color: "#5a6a5a", marginBottom: 8 }}>Haetaan tapahtumia...</div>
+          )}
+          {calendars.length === 0 ? (
+            <div style={{ fontSize: 11, color: "#4a5a4a", marginBottom: 8 }}>Ei kalentereita löydetty.</div>
+          ) : (
+            <div style={{ marginBottom: 10 }}>
+              {calendars.map(cal => (
+                <div
+                  key={cal.id}
+                  onClick={() => gcToggleCalendar(cal.id)}
+                  style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", borderBottom: "1px solid rgba(255,255,255,0.04)", cursor: "pointer" }}
+                >
+                  <div style={{
+                    width: 10, height: 10, borderRadius: 2, flexShrink: 0,
+                    background: cal.enabled ? (cal.color || '#4285f4') : "rgba(255,255,255,0.1)",
+                    border: `1px solid ${cal.enabled ? (cal.color || '#4285f4') + '66' : 'rgba(255,255,255,0.08)'}`,
+                    transition: "background 0.2s",
+                  }} />
+                  <span style={{ flex: 1, fontSize: 12, color: cal.enabled ? "#c4c4c4" : "#4a5a4a", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", transition: "color 0.2s" }}>
+                    {cal.name}
+                    {cal.primary && <span style={{ fontSize: 8, color: "#4a5a4a", marginLeft: 5 }}>(pää)</span>}
+                  </span>
+                  <div style={{
+                    width: 26, height: 14, borderRadius: 7, flexShrink: 0, position: "relative",
+                    background: cal.enabled ? `${(cal.color || '#4285f4')}44` : "rgba(255,255,255,0.06)",
+                    border: `1px solid ${cal.enabled ? (cal.color || '#4285f4') + '55' : 'rgba(255,255,255,0.1)'}`,
+                    transition: "background 0.2s",
+                  }}>
+                    <div style={{
+                      position: "absolute", top: 2, left: cal.enabled ? 14 : 2,
+                      width: 8, height: 8, borderRadius: "50%",
+                      background: cal.enabled ? (cal.color || '#4285f4') : "#3a4a3a",
+                      transition: "left 0.2s, background 0.2s",
+                    }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          <button
+            className="btn-ghost"
+            onClick={gcDisconnect}
+            style={{ width: "100%", fontSize: 9, color: "#f87171", borderColor: "rgba(248,113,113,0.2)" }}
+            onMouseOver={e => { e.currentTarget.style.background = "rgba(248,113,113,0.06)"; }}
+            onMouseOut={e => { e.currentTarget.style.background = "transparent"; }}
+          >
+            Kirjaudu ulos Google
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function MorningDashboard({ onLogout }) {
   const [now, setNow]           = useState(new Date());
   const weatherState            = useWeather();
@@ -1834,6 +2063,9 @@ function MorningDashboard({ onLogout }) {
   });
   useDataSync("weekPlan", setWeekPlan);
   useDataSync("recurringEvents", setRecurringEvents);
+  const { auth: gcAuth, settings: gcSettings, gcEvents, status: gcStatus, error: gcError,
+          gcConnect, gcDisconnect, gcToggleCalendar, gcRefresh } = useGoogleCalendar();
+
   const [dataReady, setDataReady]             = useState(false);
   const [showReview, setShowReview]           = useState(false);
   const [editMode, setEditMode]               = useState(false);
@@ -1876,6 +2108,19 @@ function MorningDashboard({ onLogout }) {
   const dayIndex  = (now.getDay() + 6) % 7;
   const todayName = DAYS[dayIndex];
 
+  // Monday-anchored date strings for the current week, used to look up GCal events in the weekly planner
+  const weekDateStrs = (() => {
+    const mon = new Date(now);
+    const dow = mon.getDay() || 7;
+    mon.setDate(mon.getDate() - (dow - 1));
+    mon.setHours(0, 0, 0, 0);
+    return DAYS.map((_, i) => {
+      const d = new Date(mon);
+      d.setDate(mon.getDate() + i);
+      return d.toLocaleDateString('sv-SE', { timeZone: 'Europe/Helsinki' });
+    });
+  })();
+
   const addEvent = (day) => {
     if (!newEventTime || !newEventTitle) return;
     const ev = { time: newEventTime, title: newEventTitle };
@@ -1913,7 +2158,7 @@ function MorningDashboard({ onLogout }) {
 
   return (
     <>
-    {showReview && <WeeklyReviewOverlay onClose={() => setShowReview(false)} now={now} />}
+    {showReview && <WeeklyReviewOverlay onClose={() => setShowReview(false)} now={now} gcEvents={gcEvents} />}
     <div style={{
       minHeight: "100vh",
       background: "#0d1117",
@@ -2042,6 +2287,7 @@ function MorningDashboard({ onLogout }) {
           setRecurringEvents={setRecurringEvents}
           todayName={todayName}
           now={now}
+          gcEvents={gcEvents}
         />
 
         {/* ELECTRICITY */}
@@ -2071,6 +2317,18 @@ function MorningDashboard({ onLogout }) {
         {/* IDEAS & CREATIVITY */}
         <IdeasWidget />
 
+        {/* GOOGLE CALENDAR SETTINGS */}
+        <GoogleCalendarSettingsCard
+          auth={gcAuth}
+          settings={gcSettings}
+          status={gcStatus}
+          error={gcError}
+          gcConnect={gcConnect}
+          gcDisconnect={gcDisconnect}
+          gcToggleCalendar={gcToggleCalendar}
+          gcRefresh={gcRefresh}
+        />
+
       </div>
 
       {/* WEEK PLAN */}
@@ -2089,6 +2347,7 @@ function MorningDashboard({ onLogout }) {
                 ...(weekPlan[day]        || []).map((e, idx) => ({ ...e, _idx: idx, _recurring: false })),
                 ...(recurringEvents[day] || []).map((e, idx) => ({ ...e, _idx: idx, _recurring: true  })),
               ].sort((a, b) => a.time.localeCompare(b.time));
+              const gcDayEvents = (gcEvents[weekDateStrs[i]] || []).filter(e => e.time);
               return (
                 <div className="day-col" key={day}>
                   <div className={`day-header${isToday ? " today" : ""}`}>
@@ -2103,6 +2362,13 @@ function MorningDashboard({ onLogout }) {
                         <button className="btn-ghost" style={{ padding: "1px 5px", fontSize: 9, marginLeft: 2 }}
                           onClick={() => removeEvent(day, e._idx, e._recurring)}>×</button>
                       )}
+                    </div>
+                  ))}
+                  {gcDayEvents.map((ev, ei) => (
+                    <div key={`gc-${ei}`} className="mini-event" title={ev.calendarName || ''} style={{ display: "flex", alignItems: "center", gap: 2 }}>
+                      <span style={{ display: "inline-block", width: 5, height: 5, borderRadius: "50%", background: ev.calendarColor || '#4285f4', flexShrink: 0, marginRight: 2 }} />
+                      <span style={{ fontSize: 11, color: ev.calendarColor || '#4285f4', minWidth: 28, flexShrink: 0 }}>{ev.time}</span>
+                      <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", color: "#6a7a8a" }}>{ev.title}</span>
                     </div>
                   ))}
                   {editMode && editDay === day && (
