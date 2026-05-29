@@ -2004,7 +2004,7 @@ function MorningDashboard({ onLogout }) {
           </svg>
           Gmail
         </a>
-        <a href="https://outlook.live.com" target="_blank" rel="noopener noreferrer"
+        <a href="https://outlook.cloud.microsoft/mail/" target="_blank" rel="noopener noreferrer"
           title="Outlook"
           style={{ display: "flex", alignItems: "center", gap: 5, padding: "4px 10px", background: "rgba(0,120,212,0.08)", border: "1px solid rgba(0,120,212,0.2)", borderRadius: 2, textDecoration: "none", color: "#60a5fa", fontSize: 11, letterSpacing: "0.05em", transition: "background 0.2s" }}
           onMouseOver={e => e.currentTarget.style.background = "rgba(0,120,212,0.16)"}
