@@ -683,8 +683,10 @@ function TimeTrackerWidget() {
   const [, setTick]                 = useState(0);
   const [monthOffset, setMonthOffset] = useState(0);
   const [summary, setSummary]       = useState(null);
+  const initDoneRef = useRef(false);
+  useEffect(() => { dataService.init().finally(() => { initDoneRef.current = true; }); }, []);
 
-  useEffect(() => { dataService.save(TT_KEY, store); }, [store]);
+  useEffect(() => { if (!initDoneRef.current) return; dataService.save(TT_KEY, store); }, [store]);
 
   const isRunning = !!store.today.active;
   useEffect(() => {
@@ -1317,8 +1319,10 @@ function StudiesProjectsCard() {
   const [addingProject, setAddingProject] = useState(false);
   const [newCourse, setNewCourse]     = useState({ name: "", description: "", deadline: "", moodleUrl: "" });
   const [newProject, setNewProject]   = useState({ name: "", description: "", status: "active", url: "" });
+  const initDoneRef = useRef(false);
+  useEffect(() => { dataService.init().finally(() => { initDoneRef.current = true; }); }, []);
 
-  useEffect(() => { dataService.save(SP_KEY, data); }, [data]);
+  useEffect(() => { if (!initDoneRef.current) return; dataService.save(SP_KEY, data); }, [data]);
 
   const STATUS_COLORS = { active: "#6ee7b7", paused: "#fbbf24", done: "#5a6a5a" };
   const STATUS_FI     = { active: "Aktiivinen", paused: "Tauolla", done: "Valmis" };
@@ -1462,8 +1466,10 @@ function DailyRoutinesWidget() {
   const [editMode, setEditMode] = useState(false);
   const [newSupp, setNewSupp]   = useState("");
   const [newHabit, setNewHabit] = useState("");
+  const initDoneRef = useRef(false);
+  useEffect(() => { dataService.init().finally(() => { initDoneRef.current = true; }); }, []);
 
-  useEffect(() => { dataService.save(RT_KEY, store); }, [store]);
+  useEffect(() => { if (!initDoneRef.current) return; dataService.save(RT_KEY, store); }, [store]);
 
   const today    = fiStr();
   const todayRaw = store.days[today] || {};
@@ -1602,8 +1608,10 @@ function WeeklyGoalsWidget() {
   const [showHistory, setShowHistory] = useState(false);
   const [newTitle, setNewTitle]       = useState("");
   const [newCat, setNewCat]           = useState("");
+  const initDoneRef = useRef(false);
+  useEffect(() => { dataService.init().finally(() => { initDoneRef.current = true; }); }, []);
 
-  useEffect(() => { dataService.save(WG_KEY, store); }, [store]);
+  useEffect(() => { if (!initDoneRef.current) return; dataService.save(WG_KEY, store); }, [store]);
 
   const goals = store.current.goals;
   const done  = goals.filter(g => g.done).length;
@@ -1760,8 +1768,11 @@ function LeviWidget({ now }) {
   const [newTenant, setNewTenant]       = useState({ name: "", rent: "", billingDay: "1", notes: "" });
   const [newTask, setNewTask]           = useState("");
 
-  useEffect(() => { dataService.save(LEVI_KEY, data); }, [data]);
-  useEffect(() => { dataService.save("maintenance", maintenance); }, [maintenance]);
+  const initDoneRef = useRef(false);
+  useEffect(() => { dataService.init().finally(() => { initDoneRef.current = true; }); }, []);
+
+  useEffect(() => { if (!initDoneRef.current) return; dataService.save(LEVI_KEY, data); }, [data]);
+  useEffect(() => { if (!initDoneRef.current) return; dataService.save("maintenance", maintenance); }, [maintenance]);
 
   const month    = now.getMonth() + 1;
   const year     = now.getFullYear();

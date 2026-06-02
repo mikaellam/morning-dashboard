@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import * as dataService from './services/dataService';
 
 const CATEGORIES = ["Työ", "Opiskelu", "Omat projektit", "Henkilökohtainen"];
@@ -120,12 +120,17 @@ export default function WeeklyReviewOverlay({ onClose, now, gcEvents = {} }) {
     return () => window.removeEventListener('dashboard:sync', h);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const initDoneRef = useRef(false);
+  useEffect(() => { dataService.init().finally(() => { initDoneRef.current = true; }); }, []);
+
   useEffect(() => {
+    if (!initDoneRef.current) return;
     dataService.save(weekKey(ty, tw), thisData);
     pruneOldReviews();
   }, [thisData, ty, tw]);
 
   useEffect(() => {
+    if (!initDoneRef.current) return;
     dataService.save(weekKey(ny, nw), nextData);
   }, [nextData, ny, nw]);
 
