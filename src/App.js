@@ -656,7 +656,20 @@ const loadTT = () => {
         s.today.accumulated[s.today.active.category] = (s.today.accumulated[s.today.active.category] || 0) + e;
         s.today.active = null;
       }
-      s.history = [{ date: s.today.date, totals: { ...s.today.accumulated } }, ...s.history].slice(0, 30);
+      const existingIdx = s.history.findIndex(h => h.date === s.today.date);
+      if (existingIdx >= 0) {
+        // Merge with existing entry (take max per category) to avoid ghost zero-entries
+        const existing = s.history[existingIdx];
+        const merged = {
+          date: s.today.date,
+          totals: Object.fromEntries(
+            CATEGORIES.map(c => [c, Math.max(existing.totals[c] || 0, s.today.accumulated[c] || 0)])
+          ),
+        };
+        s.history = [merged, ...s.history.filter((_, i) => i !== existingIdx)].slice(0, 30);
+      } else {
+        s.history = [{ date: s.today.date, totals: { ...s.today.accumulated } }, ...s.history].slice(0, 30);
+      }
       s.today = { date: today, accumulated: emptyAccum(), active: null };
     }
     return s;
@@ -715,7 +728,7 @@ function TimeTrackerWidget() {
     return s;
   });
 
-  const endDay = () => {
+  const endDay = async () => {
     const s = JSON.parse(JSON.stringify(store));
     if (s.today.active) {
       const e = Date.now() - s.today.active.startedAt;
@@ -723,9 +736,12 @@ function TimeTrackerWidget() {
       s.today.active = null;
     }
     const snap = { date: s.today.date, totals: { ...s.today.accumulated } };
-    s.history = [snap, ...s.history].slice(0, 30);
-    s.today   = { date: fiStr(), accumulated: emptyAccum(), active: null };
-    setStore(s);
+    // Persist the history entry while today.accumulated is still intact.
+    // Only reset today after the write is confirmed (localStorage + Supabase).
+    const withHistory = { ...s, history: [snap, ...s.history].slice(0, 30) };
+    console.log('[endDay] withHistory before flush — history[0]:', withHistory.history[0], '| today.accumulated:', withHistory.today.accumulated);
+    try { await dataService.flush(TT_KEY, withHistory); } catch {}
+    setStore({ ...withHistory, today: { date: fiStr(), accumulated: emptyAccum(), active: null } });
     setSummary(snap);
   };
 
@@ -754,7 +770,22 @@ function TimeTrackerWidget() {
               </div>
             );
           })}
-          <button className="btn-ghost" style={{ marginTop:10, width:"100%", fontSize:10 }} onClick={() => setSummary(null)}>
+          <button className="btn-ghost" style={{ marginTop:10, width:"100%", fontSize:10 }} onClick={() => {
+            console.log('[Jatka seurantaa] store.history[0]:', store.history[0], '| store.today:', store.today);
+            // Restore today.accumulated from the end-of-day snapshot and remove that
+            // history entry so tracking can continue without a duplicate when the
+            // day rolls over.
+            if (store.history[0]?.date === store.today.date) {
+              setStore(prev => {
+                const s = JSON.parse(JSON.stringify(prev));
+                const [first, ...rest] = s.history;
+                s.today.accumulated = { ...first.totals };
+                s.history = rest;
+                return s;
+              });
+            }
+            setSummary(null);
+          }}>
             Jatka seurantaa
           </button>
         </div>

@@ -109,6 +109,31 @@ export function save(key, value) {
   if (supabase && !NO_SYNC.has(key)) scheduleSave(key, value);
 }
 
+/**
+ * Write immediately to localStorage and Supabase with no debounce.
+ * Cancels any pending debounced save for this key.
+ * Re-throws on Supabase error so callers can react to a failed write.
+ */
+export async function flush(key, value) {
+  if (_timers[key]) { clearTimeout(_timers[key]); delete _timers[key]; _inFlight--; }
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch {}
+  if (!supabase || NO_SYNC.has(key)) return;
+  setStatus('syncing');
+  _inFlight++;
+  try {
+    await flushOne(key, value);
+  } catch (err) {
+    const msg = err.message || String(err);
+    console.warn('[dataService] flush failed:', key, msg);
+    debugInfo.lastError = 'Flush ' + key + ': ' + msg;
+    setStatus('error');
+    _inFlight--;
+    throw err;
+  }
+  _inFlight--;
+  if (_inFlight === 0 && _status !== 'error') setStatus('synced');
+}
+
 /** Remove from localStorage and Supabase. */
 export async function remove(key) {
   localStorage.removeItem(key);
