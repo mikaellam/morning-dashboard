@@ -121,7 +121,7 @@ export default function WeeklyReviewOverlay({ onClose, now, gcEvents = {} }) {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const initDoneRef = useRef(false);
-  useEffect(() => { dataService.init().finally(() => { initDoneRef.current = true; }); }, []);
+  useEffect(() => { dataService.ensureInit().finally(() => { initDoneRef.current = true; }); }, []);
 
   useEffect(() => {
     if (!initDoneRef.current) return;

@@ -95,6 +95,13 @@ function scheduleSave(key, value) {
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
+/** Returns the single shared init() promise — safe to call from multiple widgets. */
+let _initPromise = null;
+export function ensureInit() {
+  if (!_initPromise) _initPromise = init();
+  return _initPromise;
+}
+
 /** Synchronous read from localStorage. */
 export function load(key) {
   try {

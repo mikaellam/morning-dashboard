@@ -684,7 +684,7 @@ function TimeTrackerWidget() {
   const [monthOffset, setMonthOffset] = useState(0);
   const [summary, setSummary]       = useState(null);
   const initDoneRef = useRef(false);
-  useEffect(() => { dataService.init().finally(() => { initDoneRef.current = true; }); }, []);
+  useEffect(() => { dataService.ensureInit().finally(() => { initDoneRef.current = true; }); }, []);
 
   useEffect(() => { if (!initDoneRef.current) return; dataService.save(TT_KEY, store); }, [store]);
 
@@ -1320,7 +1320,7 @@ function StudiesProjectsCard() {
   const [newCourse, setNewCourse]     = useState({ name: "", description: "", deadline: "", moodleUrl: "" });
   const [newProject, setNewProject]   = useState({ name: "", description: "", status: "active", url: "" });
   const initDoneRef = useRef(false);
-  useEffect(() => { dataService.init().finally(() => { initDoneRef.current = true; }); }, []);
+  useEffect(() => { dataService.ensureInit().finally(() => { initDoneRef.current = true; }); }, []);
 
   useEffect(() => { if (!initDoneRef.current) return; dataService.save(SP_KEY, data); }, [data]);
 
@@ -1467,7 +1467,7 @@ function DailyRoutinesWidget() {
   const [newSupp, setNewSupp]   = useState("");
   const [newHabit, setNewHabit] = useState("");
   const initDoneRef = useRef(false);
-  useEffect(() => { dataService.init().finally(() => { initDoneRef.current = true; }); }, []);
+  useEffect(() => { dataService.ensureInit().finally(() => { initDoneRef.current = true; }); }, []);
 
   useEffect(() => { if (!initDoneRef.current) return; dataService.save(RT_KEY, store); }, [store]);
 
@@ -1609,7 +1609,7 @@ function WeeklyGoalsWidget() {
   const [newTitle, setNewTitle]       = useState("");
   const [newCat, setNewCat]           = useState("");
   const initDoneRef = useRef(false);
-  useEffect(() => { dataService.init().finally(() => { initDoneRef.current = true; }); }, []);
+  useEffect(() => { dataService.ensureInit().finally(() => { initDoneRef.current = true; }); }, []);
 
   useEffect(() => { if (!initDoneRef.current) return; dataService.save(WG_KEY, store); }, [store]);
 
@@ -1769,7 +1769,7 @@ function LeviWidget({ now }) {
   const [newTask, setNewTask]           = useState("");
 
   const initDoneRef = useRef(false);
-  useEffect(() => { dataService.init().finally(() => { initDoneRef.current = true; }); }, []);
+  useEffect(() => { dataService.ensureInit().finally(() => { initDoneRef.current = true; }); }, []);
 
   useEffect(() => { if (!initDoneRef.current) return; dataService.save(LEVI_KEY, data); }, [data]);
   useEffect(() => { if (!initDoneRef.current) return; dataService.save("maintenance", maintenance); }, [maintenance]);
@@ -2127,7 +2127,7 @@ function MorningDashboard({ onLogout }) {
   }, []);
 
   useEffect(() => {
-    dataService.init().finally(() => {
+    dataService.ensureInit().finally(() => {
       initDoneRef.current = true;
       setDataReady(true);
     });
